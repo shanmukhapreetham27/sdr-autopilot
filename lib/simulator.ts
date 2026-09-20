@@ -131,12 +131,36 @@ function narrate(agent: AgentKey, p: Prospect, channel?: Channel): string {
   }
 }
 
-/** Channel the campaign is actually allowed to use right now. */
-function availableChannel(campaign: Campaign): Channel | null {
-  const usable = (Object.keys(campaign.channels) as Channel[]).filter(
+/**
+ * Channel for this prospect's next touch.
+ *
+ * Follows the Outreach Strategy agent's documented preference order rather
+ * than picking at random: email, linkedin, email, voice, sms by sequence
+ * step. Voice and SMS are never a first touch, whatever is enabled — that is
+ * the agent's own rule, and a cold call before any written contact is exactly
+ * the behaviour it exists to prevent.
+ *
+ * Returns null when nothing is permitted, which the caller treats the way the
+ * agent would: skip, no eligible channel.
+ */
+const CHANNEL_ORDER: Channel[][] = [
+  ["email", "linkedin"], // touch 1
+  ["linkedin", "email"], // touch 2, change the medium
+  ["email", "linkedin"], // touch 3
+  ["voice", "email", "linkedin"], // touch 4, earned by persistence
+  ["sms", "email", "linkedin"], // touch 5 and beyond
+];
+
+function preferredChannel(campaign: Campaign, prospect: Prospect): Channel | null {
+  const open = (Object.keys(campaign.channels) as Channel[]).filter(
     (c) => campaign.channels[c].enabled && !campaign.channels[c].paused,
   );
-  return usable.length ? pick(usable) : null;
+  const allowed =
+    prospect.touchCount === 0 ? open.filter((c) => c !== "voice" && c !== "sms") : open;
+  if (!allowed.length) return null;
+
+  const step = Math.min(prospect.touchCount, CHANNEL_ORDER.length - 1);
+  return CHANNEL_ORDER[step].find((c) => allowed.includes(c)) ?? allowed[0];
 }
 
 function agentAllowed(campaign: Campaign, agent: AgentKey): boolean {
@@ -171,7 +195,7 @@ export function decideStep(campaign: Campaign, prospects: Prospect[]): AgentStep
     const needsChannel = stage === "qualified" || stage === "contacted" || stage === "engaged";
     let channel: Channel | undefined;
     if (needsChannel) {
-      const open = availableChannel(campaign);
+      const open = preferredChannel(campaign, prospect);
       if (!open) continue;
       channel = open;
     }

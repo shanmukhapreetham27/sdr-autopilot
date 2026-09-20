@@ -367,7 +367,13 @@ on. The sidebar shows the redirect address and the remaining allowance.
 ### What triggers a send
 
 Only a **live Personalisation Agent result on the email channel** that the
-agent did not flag for review. Simulated steps have no real copy to send, and
+agent did not flag for review.
+
+Channel choice follows the Outreach Strategy agent's documented preference
+order — email, linkedin, email, voice, sms by sequence step — rather than
+picking at random, and voice and SMS are never a first touch. So a prospect's
+first contact is email whenever email is enabled, which is both what the
+agent specifies and what makes the send path reliably demonstrable. Simulated steps have no real copy to send, and
 a message the agent marked `requires_review` waits for a human.
 
 ---
