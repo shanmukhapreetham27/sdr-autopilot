@@ -94,6 +94,10 @@ function prospectRecord(p: Prospect) {
     location: p.location,
     email: p.email,
     linkedin: p.linkedin,
+    // The ICP agent scores a 30-point COMPANY dimension from these and
+    // refuses to guess when they are absent.
+    industry: p.industry ?? null,
+    employee_count: p.employeeCount ?? null,
     stage: p.state,
     fit_score: p.fitScore || null,
   };

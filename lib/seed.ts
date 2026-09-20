@@ -9,6 +9,7 @@ import type {
   PromptVersion,
 } from "./types";
 import { AGENTS } from "./types";
+import { factsFor } from "./companies";
 
 /**
  * Deterministic seed data. No Date.now() or Math.random() at module scope:
@@ -328,6 +329,7 @@ type SeedProspect = [
 function mkProspects(campaignId: string, prefix: string, rows: SeedProspect[]): Prospect[] {
   return rows.map(([name, title, company, domain, location, state, fitScore, touched, lastAction], i) => {
     const handle = name.toLowerCase().replace(/[^a-z]+/g, ".");
+    const facts = factsFor(company);
     return {
       id: `${prefix}_${i + 1}`,
       campaignId,
@@ -337,6 +339,8 @@ function mkProspects(campaignId: string, prefix: string, rows: SeedProspect[]): 
       location,
       email: `${handle}@${domain}`,
       linkedin: `linkedin.com/in/${handle.replace(/\./g, "-")}`,
+      industry: facts?.industry,
+      employeeCount: facts?.employees,
       state,
       fitScore,
       touched,

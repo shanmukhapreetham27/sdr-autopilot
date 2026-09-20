@@ -2,6 +2,8 @@
 
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
+import { factsFor } from "./companies";
+import { describeVerdict, scoreProspect } from "./icpScorer";
 import {
   buildAgentRequest,
   invokeAgent,
@@ -405,6 +407,8 @@ function discoverProspect(campaign: Campaign): { prospect: Prospect; source: str
       location: company.location,
       email: `${handle}@${company.domain}`,
       linkedin: `linkedin.com/in/${handle.replace(/\./g, "-")}`,
+      industry: factsFor(company.name)?.industry,
+      employeeCount: factsFor(company.name)?.employees,
       state: "discovered",
       fitScore: 0,
       touched: [],
@@ -430,6 +434,35 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
     step.status === "success";
 
   if (!useLive) {
+    // The ICP stage runs a faithful local port of the agent's own rules
+    // rather than a generic narration, so its verdicts are real, derived
+    // from the prospect data and reproducible. Still attributed to the
+    // fallback, never to DronaHQ.
+    if (step.agent === "icp_fitment" && step.status === "success") {
+      const verdict = scoreProspect(campaign, prospect);
+      const line = describeVerdict(verdict);
+      return {
+        source: "simulated" as const,
+        summary: `${prospect.name} [${verdict.verdict}] ${verdict.reasoning}`,
+        lastAction: line,
+        status: verdict.verdict === "NEEDS_REVIEW" ? ("pending_approval" as const) : step.status,
+        nextState:
+          verdict.verdict === "QUALIFIED"
+            ? step.nextState
+            : verdict.verdict === "REJECTED"
+              ? ("rejected" as const)
+              : prospect.state,
+        tokens: step.tokens,
+        fitScore: verdict.fitScore,
+        message: [line, "", "CRITERIA BREAKDOWN:", ...verdict.criteriaBreakdown.map((b) => `- ${b}`)].join("\n"),
+        latencyMs: undefined as number | undefined,
+        researchBrief: undefined as string | undefined,
+        dossier: undefined as Prospect["dossier"],
+        countsAsTouch: false,
+        angle: undefined as string | undefined,
+      };
+    }
+
     return {
       source: "simulated" as const,
       summary: step.summary,

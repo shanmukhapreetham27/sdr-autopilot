@@ -23,7 +23,8 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Cross-campaign duplicate-prospect conflict detection | ✅ Working |
 | Campaign creation and duplication into an A/B variant | ✅ Working |
 | Live agent execution loop with funnel progression | ✅ Working |
-| DronaHQ agent integration — all 6 agents live | ✅ Working, verified against the published endpoints |
+| DronaHQ agent integration — 5 agents live | ✅ Working, verified against the published endpoints |
+| ICP qualification | ✅ Working, run locally — see below |
 | Research brief chained into downstream agents (grounding) | ✅ Working |
 | Voice SDR agent | ⛔ Out of scope for this build |
 | Gmail sending (redirected to a demo inbox) | ✅ Working |
@@ -247,6 +248,47 @@ Real people's names and email addresses are deliberately kept out of a system th
 outbound outreach. Nothing is ever actually delivered — there is no Gmail, Twilio or
 LinkedIn sending in this build — but synthetic contacts mean that stays true even by
 accident.
+
+---
+
+## Why ICP qualification runs locally
+
+Five of the six agents work against their published webhooks. The ICP Fitment
+agent does not: it returns a completed run with no output on most calls, and
+retries do not reliably recover it. Diagnosed over ~30 calls — the identical
+payload returns null, null, then a real answer, and every rapid-fire call
+fails. It is not a payload problem and not something this codebase can fix.
+
+So that one stage runs `lib/icpScorer.ts`, a faithful port of the agent's own
+documented rules:
+
+- the same four weighted dimensions, summing to exactly 100
+- the same decision order, stopping at the first match
+- the same `QUALIFIED / REJECTED / NEEDS_REVIEW` and `rejection_reason` vocabulary
+- the same threshold arithmetic, `threshold_100 = min_score_threshold × 100`
+
+It also fixes an arithmetic bug the live agent exhibits: it scored industry
+and employee count as two separate 30-point dimensions, divided by an invented
+denominator of 200, and returned `0.7` where its own schema requires an
+integer 0-100. Here COMPANY is one dimension worth 30 and `fit_score` **is**
+the sum.
+
+Results are attributed to the local fallback in the activity log, never to
+DronaHQ, and the sidebar reads `5 / 6 wired`. Reverting to the live agent
+means removing one entry from `ROUTED_LOCALLY` in `lib/dronahq.ts`.
+
+### The verdicts are checkable
+
+Because prospects are real companies with real industries and headcounts
+(`lib/companies.ts`), every verdict can be checked against reality:
+
+| Campaign | Outcome |
+| --- | --- |
+| US SaaS CTO | 12 qualified · Accenture **rejected**, `EXCLUSION_MATCH` on "consultancies" |
+| India BFSI CIO | 7 qualified · CoinDCX **rejected**, `EXCLUSION_MATCH` on "crypto" · 2 below the 70 threshold |
+| US Voice AI | 8 qualified · Deepgram, AssemblyAI and Boston Dynamics **held for review**, `CRITERIA_MISS` on headcount |
+
+Deterministic: the same prospect and campaign always produce the same score.
 
 ---
 

@@ -155,6 +155,9 @@ export interface Prospect {
   location: string;
   email: string;
   linkedin: string;
+  /** Industry and headcount, scored by the COMPANY dimension of the ICP. */
+  industry?: string;
+  employeeCount?: number;
   state: ProspectState;
   /** 0-100 ICP fit score produced by the ICP Fitment Agent. */
   fitScore: number;

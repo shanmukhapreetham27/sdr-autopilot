@@ -68,9 +68,21 @@ export function endpointFor(agent: LiveAgentKey): AgentEndpoint | null {
   return { url, apiKey };
 }
 
+/**
+ * Agents deliberately routed to a local implementation instead of DronaHQ.
+ *
+ * The published ICP Fitment agent returns a completed run with no output on
+ * most calls. Rather than spend credits on a call that usually fails and then
+ * fall back anyway, that stage runs lib/icpScorer.ts directly. The webhook URL
+ * stays in the environment so this is a one-line revert once it is fixed.
+ */
+const ROUTED_LOCALLY: readonly LiveAgentKey[] = ["icp_fitment"];
+
 /** Which agents are actually wired right now. Safe to expose — no secrets. */
 export function wiredAgents(): LiveAgentKey[] {
-  return LIVE_CAPABLE_AGENTS.filter((a) => endpointFor(a) !== null);
+  return LIVE_CAPABLE_AGENTS.filter(
+    (a) => !ROUTED_LOCALLY.includes(a) && endpointFor(a) !== null,
+  );
 }
 
 // ---------------------------------------------------------------------------
