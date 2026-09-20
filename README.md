@@ -63,53 +63,67 @@ Browser  ──POST──▶  /api/agents/<agent>  ──POST + api-key header�
 The API key never reaches the browser: `lib/dronahq.ts` is server-only and attaches the
 `api-key` header inside the route handler.
 
-**Request** — every agent receives this payload (configure the agent's Webhook Input
-against these field names):
+**Request** — the agents bind on a single top-level `message` string. Posting nested JSON
+instead returns `"Input binding failed"`, so the app renders campaign and prospect state
+into a natural-language brief (`lib/agentBrief.ts`):
 
 ```json
 {
-  "task": "personalisation",
-  "thread_id": "<campaign_id>:<prospect_id>",
-  "campaign": {
-    "id": "camp_ussaas",
-    "name": "US SaaS CTO Outreach",
-    "system_prompt": "...",
-    "agent_prompt": "...",
-    "icp_label": "US SaaS CTO",
-    "geography": "United States",
-    "target_roles": ["CTO", "VP Engineering"],
-    "company_criteria": "...",
-    "exclusions": "...",
-    "open_channels": ["email", "linkedin"]
-  },
-  "prospect": {
-    "id": "p_us_1", "name": "Dana Whitfield", "title": "CTO",
-    "company": "Loomwork", "location": "Austin, TX",
-    "email": "...", "linkedin": "...",
-    "stage": "qualified", "fit_score": 91,
-    "channels_touched": ["email"], "last_action": "..."
-  }
+  "message": "TASK: Score this prospect against the campaign ICP...
+
+CAMPAIGN OPERATING INSTRUCTIONS:
+...
+
+AGENT INSTRUCTIONS FOR THIS TASK:
+...
+
+CAMPAIGN CONTEXT:
+- Ideal customer profile: US SaaS CTO
+...
+
+PROSPECT:
+- Name: Dana Whitfield
+- Title: CTO
+...",
+  "task": "icp_fitment",
+  "campaign_id": "camp_ussaas",
+  "prospect_id": "p_us_1"
 }
 ```
 
-**Response** — configure the agent's Response as **Standard** with a JSON Schema. Any of
-these fields are understood; all are optional:
+`task`, `campaign_id` and `prospect_id` are ignored by the binding but appear in DronaHQ's
+Request Logs, so any run can be traced back to a campaign and prospect.
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `summary` | string | One line for the activity log |
-| `message` | string | The generated outreach copy, shown expandable in the feed |
-| `score` | number | ICP fit score, 0-100 |
-| `advance` | boolean | `false` holds the prospect; on the ICP agent it means rejected |
-| `escalate` | boolean | `true` marks the action as needing a human |
-| `channel` | string | Channel the agent chose |
+The brief always includes **the campaign's own system prompt and agent prompt**. That is
+what makes one shared set of agents behave differently per campaign: editing a prompt in
+the control plane changes the next call.
 
-Responses are parsed leniently (`normaliseAgentResult`): common aliases are accepted, the
-payload may be wrapped in `result` / `data` / `output`, and a malformed response degrades
-to a logged event rather than crashing the run.
+`thread_id` is deliberately **not** sent. DronaHQ issues its own thread UUIDs per assistant,
+and passing an arbitrary id fails with `"Assistant ID does not match thread"`. Every call
+carries full context instead.
 
-`thread_id` is `<campaign_id>:<prospect_id>`, so an agent keeps context across touches to
-the same person without leaking one campaign's history into another.
+**Response** — DronaHQ replies with an envelope:
+
+```json
+{ "success": true, "thread_id": "...", "run_id": "...",
+  "message": "Agent run completed successfully...",
+  "response": "fit_score: 80
+verdict: QUALIFIED
+criteria_breakdown: ..." }
+```
+
+The agent's own output is in `response`. `normaliseAgentResult` handles three shapes:
+
+| Shape | Handling |
+| --- | --- |
+| Plain text | Regex-extracts `fit_score`, `verdict`, `channel`; full text kept as the message |
+| JSON string | Re-parsed, then treated as structured |
+| Structured JSON | Reads `summary`, `message`, `score`, `verdict`, `advance`, `escalate`, `channel` |
+
+Verdict tokens drive the funnel: `QUALIFIED` / `CONTACT` / `PROCEED` advance the prospect,
+`REJECTED` / `HOLD` / `STOP` do not, and `ESCALATE` / `NEEDS_REVIEW` mark the action as
+needing a human. A response matching none of these is logged rather than crashing the run.
+
 
 ---
 

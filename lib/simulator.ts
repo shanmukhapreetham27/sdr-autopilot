@@ -3,6 +3,7 @@
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
 import { buildAgentRequest, invokeAgent, type LiveAgentKey } from "./agentClient";
+import { summarise } from "./agentBrief";
 
 /**
  * Agent execution loop.
@@ -83,6 +84,10 @@ function pick<T>(arr: T[]): T {
 
 /** Message templates per agent, filled with real prospect context. */
 function narrate(agent: AgentKey, p: Prospect, channel?: Channel): string {
+  // Not every stage touches a prospect, so `channel` can legitimately be
+  // absent (e.g. meeting -> opportunity). Copy must never name "undefined".
+  const via = channel ? ` on ${channel}` : "";
+  const noun = channel ?? "outreach";
   switch (agent) {
     case "research":
       return pick([
@@ -98,20 +103,20 @@ function narrate(agent: AgentKey, p: Prospect, channel?: Channel): string {
       ]);
     case "personalisation":
       return pick([
-        `Drafted ${channel} opener for ${p.name}, grounded in the research brief`,
-        `Wrote ${channel} message to ${p.name} at ${p.company} — one specific hook, no invented claims`,
-        `Generated ${channel} outreach for ${p.name}, retrieved 2 playbook examples first`,
+        `Drafted ${noun} opener for ${p.name}, grounded in the research brief`,
+        `Wrote ${noun} message to ${p.name} at ${p.company} — one specific hook, no invented claims`,
+        `Generated ${noun} message for ${p.name}, retrieved 2 playbook examples first`,
       ]);
     case "outreach_strategy":
-      return `Selected ${channel} as first touch for ${p.name} based on engagement signal`;
+      return `Selected ${noun} as first touch for ${p.name} based on engagement signal`;
     case "followup":
       return pick([
-        `Scheduled follow-up on ${channel} for ${p.name}, angle changed from touch 1`,
-        `${p.name} opened but did not reply — queued touch 2 on ${channel}`,
+        `Scheduled follow-up${via} for ${p.name}, angle changed from touch 1`,
+        `${p.name} opened but did not reply — queued touch 2${via}`,
       ]);
     case "conversation":
       return pick([
-        `${p.name} replied on ${channel} — classified as interested, proposed call slots`,
+        `${p.name} replied${via} — classified as interested, proposed call slots`,
         `Read reply from ${p.name}, intent = interested, moved forward`,
         `${p.name} confirmed a slot — meeting booked and logged to CRM`,
       ]);
@@ -227,8 +232,11 @@ export function decideStep(campaign: Campaign, prospects: Prospect[]): AgentStep
     // Most downstream attempts do not move the prospect: the agent works the
     // account and waits. This keeps the funnel shaped like a funnel.
     if (Math.random() > ADVANCE_PROB[stage]) {
+      // Stages that don't touch a prospect (e.g. meeting -> opportunity) have
+      // no channel, so the copy must not name one.
+      const via = channel ? ` on ${channel}` : "";
       const waiting = pick([
-        `No reply from ${prospect.name} yet — follow-up queued on ${channel}, angle changed`,
+        `No reply from ${prospect.name} yet — follow-up queued${via}, angle changed`,
         `${prospect.name} opened but did not reply. Holding for 2 days before touch ${prospect.touched.length + 1}`,
         `Re-checked ${prospect.company} for new signals before following up with ${prospect.name}`,
       ]);
@@ -402,46 +410,67 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
 
   const r = outcome.result;
 
-  // The agent's own verdict wins over the simulated outcome.
-  const nextState =
-    r.advance === false
-      ? step.agent === "icp_fitment"
-        ? ("rejected" as const)
-        : prospect.state
+  // The agent's own verdict overrides the locally decided outcome.
+  const rejected = r.advance === false && step.agent === "icp_fitment";
+  const held = r.advance === false && step.agent !== "icp_fitment";
+
+  const nextState = rejected
+    ? ("rejected" as const)
+    : held
+      ? prospect.state
       : step.nextState;
+
+  const headline = summarise(r.text);
+  const scoreNote = r.score !== undefined ? ` (${r.score}/100)` : "";
+  const verdictNote = r.verdict ? ` — ${r.verdict}` : "";
 
   return {
     source: "dronahq" as const,
-    summary: r.summary,
-    lastAction: r.summary,
+    summary: `${prospect.name}${scoreNote}${verdictNote}: ${headline}`,
+    lastAction: headline,
     status: r.escalate ? ("pending_approval" as const) : ("success" as const),
     nextState,
-    tokens: step.tokens,
+    // DronaHQ does not return token usage on the webhook response, and
+    // attributing a simulated number to a real agent run would make the cost
+    // figures fiction. Latency is recorded instead; usage lives in DronaHQ's
+    // own credit dashboard.
+    tokens: 0,
     fitScore: r.score ?? step.fitScore,
-    message: r.message,
+    // Keep the agent's full output so a manager can read exactly what it
+    // produced, not just the one-line summary.
+    message: r.text,
     latencyMs: outcome.ms,
   };
 }
 
 /**
- * Prevents overlapping ticks. A live DronaHQ round trip can outlast the tick
- * interval, and a second tick starting mid-flight would double-act on the
- * same prospect.
+ * Campaigns currently mid-step.
+ *
+ * Tracked per campaign, not globally: a live DronaHQ call can take tens of
+ * seconds, and a single global lock would let one slow campaign stall every
+ * other campaign on the platform.
  */
-let tickInFlight = false;
+const inFlight = new Set<string>();
 
 /** One tick of the whole platform: every live campaign gets a chance to act. */
 export async function runTick() {
-  if (tickInFlight) return;
   const state = useSdr.getState();
   if (state.killSwitch) return;
 
-  tickInFlight = true;
-  try {
-    await Promise.all(state.campaigns.map((campaign) => runCampaignTick(campaign)));
-  } finally {
-    tickInFlight = false;
-  }
+  await Promise.all(
+    state.campaigns
+      .filter((c) => !inFlight.has(c.id))
+      .map(async (campaign) => {
+        inFlight.add(campaign.id);
+        try {
+          await runCampaignTick(campaign);
+        } catch {
+          // A campaign must never be able to wedge the loop for the others.
+        } finally {
+          inFlight.delete(campaign.id);
+        }
+      }),
+  );
 }
 
 async function runCampaignTick(campaign: Campaign) {

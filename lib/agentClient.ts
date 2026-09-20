@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentRequest, AgentResult } from "./dronahq";
+import { buildBrief } from "./agentBrief";
 import type { Campaign, Channel, LiveAgentKey, Prospect } from "./types";
 
 /**
@@ -29,44 +30,22 @@ export async function fetchIntegrationStatus(): Promise<IntegrationStatus | null
   }
 }
 
-/** Build the payload a DronaHQ agent's webhook input is configured against. */
+/** Build the payload a DronaHQ agent webhook accepts. */
 export function buildAgentRequest(
   task: LiveAgentKey,
   campaign: Campaign,
   prospect: Prospect,
   openChannels: Channel[],
 ): AgentRequest {
-  const version = campaign.versions.find((v) => v.id === campaign.activeVersionId);
   return {
+    // The agents bind on `message`. Everything the agent needs — including
+    // the campaign's own system and agent prompts — is rendered into it.
+    message: buildBrief(task, campaign, prospect, openChannels),
+    // Ignored by the binding, but carried through to DronaHQ's Request Logs
+    // so a run can be traced back to a campaign and prospect.
     task,
-    // One thread per prospect per campaign, so the agent keeps context across
-    // touches without leaking one campaign's history into another.
-    thread_id: `${campaign.id}:${prospect.id}`,
-    campaign: {
-      id: campaign.id,
-      name: campaign.name,
-      system_prompt: version?.systemPrompt ?? "",
-      agent_prompt: version?.agentPrompts[task] ?? "",
-      icp_label: campaign.icp.label,
-      geography: campaign.icp.geography,
-      target_roles: campaign.icp.targetRoles,
-      company_criteria: campaign.icp.companyCriteria,
-      exclusions: campaign.icp.exclusions,
-      open_channels: openChannels,
-    },
-    prospect: {
-      id: prospect.id,
-      name: prospect.name,
-      title: prospect.title,
-      company: prospect.company,
-      location: prospect.location,
-      email: prospect.email,
-      linkedin: prospect.linkedin,
-      stage: prospect.state,
-      fit_score: prospect.fitScore,
-      channels_touched: prospect.touched,
-      last_action: prospect.lastAction,
-    },
+    campaign_id: campaign.id,
+    prospect_id: prospect.id,
   };
 }
 

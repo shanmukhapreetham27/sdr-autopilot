@@ -5,15 +5,19 @@
  * environment. The browser talks to `/api/agents/<agent>` instead, which
  * proxies to DronaHQ so the secret never leaves the server.
  *
- * Integration shape (per DronaHQ docs, "Webhook Trigger"):
- *   - Each published agent exposes a unique webhook URL.
+ * Integration shape, verified against the live DronaHQ endpoints:
+ *   - Each published agent exposes a unique Webhook Trigger URL.
  *   - Auth is the `api-key: <secret>` header — NOT `Authorization: Bearer`.
- *   - We POST JSON; the agent reads it as {{body.<field>}}.
- *   - The agent's "Response" is configured as Standard + JSON Schema, so we
- *     get structured JSON back rather than prose.
- *   - `thread_id` keeps a conversation continuous across calls.
+ *   - The agents bind on a single top-level `message` string. Posting nested
+ *     JSON instead returns "Input binding failed", so the app renders its
+ *     state into a natural-language brief (see lib/agentBrief.ts).
+ *   - Responses come back as
+ *     `{ success, thread_id, run_id, message, response }`, with the agent's
+ *     own output in `response` — today a string, not structured JSON.
+ *   - An unpublished agent returns HTTP 500 "this agent's data hasn't been
+ *     published or is unavailable".
  *
- * The Voice SDR agent is deliberately not wired yet; it stays simulated.
+ * The Voice SDR agent is deliberately not wired; it stays simulated.
  */
 
 import { LIVE_CAPABLE_AGENTS } from "./types";
@@ -26,10 +30,22 @@ export function isLiveCapable(agent: string): agent is LiveAgentKey {
   return (LIVE_CAPABLE_AGENTS as readonly string[]).includes(agent);
 }
 
-/** `icp_fitment` -> `DRONAHQ_ICP_FITMENT_URL` / `..._KEY` */
-function envPrefix(agent: LiveAgentKey) {
-  return `DRONAHQ_${agent.toUpperCase()}`;
-}
+/**
+ * Internal agent key -> environment variable prefix.
+ *
+ * Explicit rather than derived from the key name, because the DronaHQ agents
+ * are named after what they do ("qualify", "personalise") while the app names
+ * them after the problem statement's agent list ("icp_fitment",
+ * "personalisation"). Keeping the map here means neither side has to rename.
+ */
+const ENV_PREFIX: Record<LiveAgentKey, string> = {
+  icp_fitment: "DRONAHQ_AGENT_QUALIFY",
+  research: "DRONAHQ_AGENT_RESEARCH",
+  outreach_strategy: "DRONAHQ_AGENT_OUTREACH",
+  personalisation: "DRONAHQ_AGENT_PERSONALISE",
+  conversation: "DRONAHQ_AGENT_CONVERSE",
+  followup: "DRONAHQ_AGENT_FOLLOWUP",
+};
 
 export interface AgentEndpoint {
   url: string;
@@ -42,7 +58,7 @@ export interface AgentEndpoint {
  * key covers every agent.
  */
 export function endpointFor(agent: LiveAgentKey): AgentEndpoint | null {
-  const prefix = envPrefix(agent);
+  const prefix = ENV_PREFIX[agent];
   const url = process.env[`${prefix}_URL`]?.trim();
   const apiKey = (process.env[`${prefix}_KEY`] ?? process.env.DRONAHQ_API_KEY)?.trim();
   if (!url || !apiKey) return null;
@@ -59,38 +75,21 @@ export function wiredAgents(): LiveAgentKey[] {
 // ---------------------------------------------------------------------------
 
 /**
- * The payload every agent receives. Stable on purpose: a DronaHQ agent's
- * webhook input is configured against these field names, so changing them
- * means reconfiguring agents in the DronaHQ console.
+ * What a DronaHQ agent webhook accepts.
+ *
+ * Verified against the live endpoints: the agents bind on the top-level
+ * `message` string. Extra keys are accepted and ignored by the binding, so
+ * they are sent for traceability in DronaHQ's Request Logs.
+ *
+ * `thread_id` is deliberately NOT sent. DronaHQ issues its own thread UUIDs
+ * per assistant; passing an arbitrary id fails with "Assistant ID does not
+ * match thread". Every call carries full context instead.
  */
 export interface AgentRequest {
+  message: string;
   task: LiveAgentKey;
-  thread_id: string;
-  campaign: {
-    id: string;
-    name: string;
-    system_prompt: string;
-    agent_prompt: string;
-    icp_label: string;
-    geography: string;
-    target_roles: string[];
-    company_criteria: string;
-    exclusions: string;
-    open_channels: string[];
-  };
-  prospect: {
-    id: string;
-    name: string;
-    title: string;
-    company: string;
-    location: string;
-    email: string;
-    linkedin: string;
-    stage: string;
-    fit_score: number;
-    channels_touched: string[];
-    last_action: string;
-  };
+  campaign_id: string;
+  prospect_id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,104 +97,123 @@ export interface AgentRequest {
 // ---------------------------------------------------------------------------
 
 /**
- * What the app needs back from any agent. Agents return their own JSON
- * schema, so `normaliseAgentResult` maps common shapes onto this rather than
- * demanding one exact schema from every agent.
+ * DronaHQ's webhook envelope:
+ *   { success, thread_id, run_id, message, response }
+ * where `response` holds the agent's own output — usually a string.
  */
 export interface AgentResult {
-  /** One-line description of what the agent did, for the activity log. */
-  summary: string;
-  /** Full generated content, when the agent produced something sendable. */
-  message?: string;
-  /** ICP score, when the agent produced one. */
+  /** The agent's full output text, shown expandable in the activity feed. */
+  text: string;
+  /** ICP score, when the agent returned one. */
   score?: number;
-  /** false means "do not advance this prospect" (rejected, or hold). */
+  /** Raw verdict token, e.g. QUALIFIED, REJECTED, ESCALATE, HOLD, STOP. */
+  verdict?: string;
+  /** false means "do not advance this prospect". */
   advance?: boolean;
-  /** Set when the agent decided a human must take over. */
+  /** true means a human must take over. */
   escalate?: boolean;
   /** Channel the agent chose, when it made that decision. */
   channel?: string;
-  /** Anything else the agent returned, kept for debugging. */
+  /** DronaHQ run identifier, for cross-referencing their Request Logs. */
+  runId?: string;
   raw: unknown;
-}
-
-function firstString(...vals: unknown[]): string | undefined {
-  for (const v of vals) {
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return undefined;
-}
-
-function firstNumber(...vals: unknown[]): number | undefined {
-  for (const v of vals) {
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
-  }
-  return undefined;
-}
-
-function firstBool(...vals: unknown[]): boolean | undefined {
-  for (const v of vals) {
-    if (typeof v === "boolean") return v;
-    if (v === "true") return true;
-    if (v === "false") return false;
-  }
-  return undefined;
 }
 
 type Dict = Record<string, unknown>;
 const asDict = (v: unknown): Dict => (v && typeof v === "object" ? (v as Dict) : {});
 
 /**
- * Map an agent's JSON onto `AgentResult`.
+ * Map an agent's output onto `AgentResult`.
  *
- * Deliberately forgiving. Each DronaHQ agent defines its own response schema,
- * and a malformed or unexpected response must degrade to "we got something"
- * rather than crash the run — reliability matters more here than strictness.
+ * Handles both shapes: a plain string (what the live agents return today) and
+ * structured JSON (what they would return if Structured Output were enabled).
+ * A response that matches neither degrades to a logged event rather than
+ * crashing the run.
  */
 export function normaliseAgentResult(agent: LiveAgentKey, raw: unknown): AgentResult {
-  // DronaHQ wraps structured output under `result` or `data` in some configs.
   const root = asDict(raw);
-  const body = asDict(root.result ?? root.data ?? root.output ?? root.response ?? root);
+  const runId = typeof root.run_id === "string" ? root.run_id : undefined;
+  const payload = root.response ?? root.result ?? root.data ?? root.output ?? raw;
 
-  const summary =
-    firstString(
-      body.summary,
-      body.reason,
-      body.rationale,
-      body.decision,
-      body.verdict,
-      body.text,
-      body.message,
-      root.summary,
-      typeof raw === "string" ? raw : undefined,
-    ) ?? `${agent} completed`;
+  // --- structured output path ---
+  if (payload && typeof payload === "object") {
+    const body = asDict(payload);
+    const text =
+      typeof body.message === "string"
+        ? body.message
+        : typeof body.summary === "string"
+          ? body.summary
+          : JSON.stringify(body, null, 2);
+    const verdict = typeof body.verdict === "string" ? body.verdict.toUpperCase() : undefined;
+    return {
+      text,
+      score: typeof body.score === "number" ? body.score : undefined,
+      verdict,
+      advance: typeof body.advance === "boolean" ? body.advance : verdictAdvance(verdict),
+      escalate: typeof body.escalate === "boolean" ? body.escalate : verdictEscalate(verdict),
+      channel: typeof body.channel === "string" ? body.channel : undefined,
+      runId,
+      raw,
+    };
+  }
 
-  const message = firstString(body.message, body.email, body.body, body.content, body.text);
+  // --- text path (what the live agents return) ---
+  const text = typeof payload === "string" ? payload.trim() : "";
 
-  const score = firstNumber(body.score, body.fit_score, body.fitScore, body.rating);
+  // Some agents return JSON *as a string* — `{"verdict": "QUALIFIED", ...}`.
+  // Parse it so the structured path handles it, rather than regexing JSON.
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const reparsed: unknown = JSON.parse(text);
+      if (reparsed && typeof reparsed === "object") {
+        const inner = normaliseAgentResult(agent, { response: reparsed, run_id: runId });
+        return { ...inner, raw };
+      }
+    } catch {
+      // Looked like JSON but wasn't. Fall through to plain-text parsing.
+    }
+  }
 
-  const verdict = firstString(body.verdict, body.decision, body.status)?.toLowerCase();
-  const rejected =
-    verdict?.includes("reject") ||
-    verdict?.includes("disqualif") ||
-    firstBool(body.rejected) === true;
+  if (!text) {
+    return {
+      text: `${agent} returned an empty response`,
+      advance: false,
+      runId,
+      raw,
+    };
+  }
 
-  const advance = firstBool(body.advance, body.qualified, body.proceed) ?? (rejected ? false : undefined);
+  const scoreMatch = text.match(/fit[_\s]?score\s*[:=]?\s*(\d{1,3})/i) ?? text.match(/\bscore\s*[:=]\s*(\d{1,3})/i);
+  const score = scoreMatch ? Math.min(100, Number(scoreMatch[1])) : undefined;
 
-  const escalate =
-    firstBool(body.escalate, body.needs_human, body.requires_approval) ??
-    (verdict?.includes("escalat") ? true : undefined);
+  const verdictMatch = text.match(/verdict\s*[:=]?\s*([A-Za-z_]+)/i);
+  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : undefined;
+
+  const channelMatch = text.match(/channel\s*[:=]\s*([a-z]+)/i);
 
   return {
-    summary: summary.slice(0, 400),
-    message,
+    text,
     score,
-    advance,
-    escalate,
-    channel: firstString(body.channel, body.selected_channel),
+    verdict,
+    advance: verdictAdvance(verdict),
+    escalate: verdictEscalate(verdict),
+    channel: channelMatch ? channelMatch[1].toLowerCase() : undefined,
+    runId,
     raw,
   };
+}
+
+/** Verdict tokens that mean "do not move this prospect forward". */
+function verdictAdvance(verdict?: string): boolean | undefined {
+  if (!verdict) return undefined;
+  if (/REJECT|DISQUALIF|STOP|HOLD|NEEDS_REVIEW/.test(verdict)) return false;
+  if (/QUALIFIED|CONTACT|PROCEED|FOLLOW_UP|APPROVE/.test(verdict)) return true;
+  return undefined;
+}
+
+function verdictEscalate(verdict?: string): boolean | undefined {
+  if (!verdict) return undefined;
+  return /ESCALATE|NEEDS_REVIEW|REVIEW/.test(verdict);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +224,7 @@ export type AgentCallOutcome =
   | { ok: true; result: AgentResult; ms: number }
   | { ok: false; error: string; status?: number; ms: number };
 
-const TIMEOUT_MS = 25_000;
+const TIMEOUT_MS = 60_000;
 
 /**
  * Turn an error body into one readable line for the activity log.

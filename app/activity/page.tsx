@@ -23,6 +23,7 @@ export default function ActivityPage() {
   const escalations = activity.filter((e) => e.status === "pending_approval").length;
   const failures = activity.filter((e) => e.status === "failed").length;
   const tokens = activity.reduce((s, e) => s + e.tokens, 0);
+  const dronahqRuns = activity.filter((e) => e.source === "dronahq").length;
 
   return (
     <div className="space-y-5">
@@ -34,14 +35,19 @@ export default function ActivityPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Total actions" value={activity.length} />
         <Stat label="Awaiting human" value={escalations} tone={escalations ? "warn" : "default"} />
         <Stat label="Failures" value={failures} tone={failures ? "bad" : "default"} />
         <Stat
-          label="Tokens used"
+          label="DronaHQ agent runs"
+          value={dronahqRuns}
+          hint="Credit usage is tracked in DronaHQ"
+        />
+        <Stat
+          label="Simulated tokens"
           value={tokens.toLocaleString()}
-          hint={`≈ $${((tokens / 1_000_000) * 3).toFixed(2)} at $3/M input`}
+          hint={`≈ $${((tokens / 1_000_000) * 3).toFixed(2)} — estimate for simulated steps only`}
         />
       </div>
 
