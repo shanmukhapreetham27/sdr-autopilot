@@ -2,20 +2,24 @@
 
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
+import { buildAgentRequest, invokeAgent, type LiveAgentKey } from "./agentClient";
 
 /**
  * Agent execution loop.
  *
- * Right now each "step" is generated locally so the control plane can be
- * demonstrated end-to-end without burning API credits or waiting on live
- * integrations. The contract below is the seam: `runStep` returns exactly the
- * shape a real agent backend would return, so swapping in live LLM + tool
- * calls means replacing the body of `decideStep` only — the store, the UI and
- * the activity log do not change.
+ * Each tick, every Live campaign gets one chance to act. `decideStep` picks
+ * which prospect moves, which agent owns the move, and which channel is open
+ * — enforcing campaign status, per-agent pause, per-channel pause and the
+ * global kill switch before any action can be produced.
  *
- * Every gate a real run would respect is enforced here for real:
- * campaign status, per-agent pause, per-channel pause and the global kill
- * switch are all checked before a step is allowed to produce an action.
+ * How the step is then executed depends on configuration:
+ *   - If the owning agent has a DronaHQ webhook configured, the real agent is
+ *     called and its structured response drives the outcome.
+ *   - Otherwise the step falls back to a locally generated narration, so the
+ *     control plane is fully demonstrable without every agent wired.
+ *
+ * Every activity event records which of the two actually happened, so the UI
+ * never claims a DronaHQ agent ran when it did not.
  */
 
 export interface AgentStep {
@@ -338,60 +342,168 @@ function discoverProspect(campaign: Campaign): { prospect: Prospect; source: str
   };
 }
 
+/** Channels this campaign may currently use, for the agent payload. */
+function openChannels(campaign: Campaign): Channel[] {
+  return (Object.keys(campaign.channels) as Channel[]).filter(
+    (c) => campaign.channels[c].enabled && !campaign.channels[c].paused,
+  );
+}
+
+/**
+ * Execute one decided step, calling the real DronaHQ agent when that agent is
+ * wired. Returns the event to log and the prospect patch to apply.
+ */
+async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: AgentKey[]) {
+  const { prospect } = step;
+
+  const useLive =
+    liveAgents.includes(step.agent) &&
+    // A locally-decided failure or escalation is part of the simulation and
+    // must not be passed off as a DronaHQ result.
+    step.status === "success";
+
+  if (!useLive) {
+    return {
+      source: "simulated" as const,
+      summary: step.summary,
+      lastAction: step.lastAction,
+      status: step.status,
+      nextState: step.nextState,
+      tokens: step.tokens,
+      fitScore: step.fitScore,
+      message: undefined as string | undefined,
+      latencyMs: undefined as number | undefined,
+    };
+  }
+
+  const payload = buildAgentRequest(
+    step.agent as LiveAgentKey,
+    campaign,
+    prospect,
+    openChannels(campaign),
+  );
+  const outcome = await invokeAgent(step.agent as LiveAgentKey, payload);
+
+  if (!outcome.ok) {
+    // A failed DronaHQ call is a real operational failure: log it honestly and
+    // leave the prospect where it is so the next tick retries.
+    return {
+      source: "dronahq" as const,
+      summary: `DronaHQ ${step.agent} call failed for ${prospect.name}: ${outcome.error}`,
+      lastAction: "DronaHQ call failed, will retry",
+      status: "failed" as const,
+      nextState: prospect.state,
+      tokens: 0,
+      fitScore: undefined,
+      message: undefined,
+      latencyMs: outcome.ms,
+    };
+  }
+
+  const r = outcome.result;
+
+  // The agent's own verdict wins over the simulated outcome.
+  const nextState =
+    r.advance === false
+      ? step.agent === "icp_fitment"
+        ? ("rejected" as const)
+        : prospect.state
+      : step.nextState;
+
+  return {
+    source: "dronahq" as const,
+    summary: r.summary,
+    lastAction: r.summary,
+    status: r.escalate ? ("pending_approval" as const) : ("success" as const),
+    nextState,
+    tokens: step.tokens,
+    fitScore: r.score ?? step.fitScore,
+    message: r.message,
+    latencyMs: outcome.ms,
+  };
+}
+
+/**
+ * Prevents overlapping ticks. A live DronaHQ round trip can outlast the tick
+ * interval, and a second tick starting mid-flight would double-act on the
+ * same prospect.
+ */
+let tickInFlight = false;
+
 /** One tick of the whole platform: every live campaign gets a chance to act. */
-export function runTick() {
+export async function runTick() {
+  if (tickInFlight) return;
   const state = useSdr.getState();
   if (state.killSwitch) return;
 
-  for (const campaign of state.campaigns) {
-    // --- discovery ---
-    if (campaign.status === "live") {
-      const count = useSdr
-        .getState()
-        .prospects.filter((p) => p.campaignId === campaign.id).length;
-      if (count < MAX_PROSPECTS_PER_CAMPAIGN && Math.random() < 0.4) {
-        const { prospect, source } = discoverProspect(campaign);
-        state.addProspect(prospect);
-        state.pushEvent({
-          campaignId: campaign.id,
-          agent: "research",
-          prospectId: prospect.id,
-          prospectName: prospect.name,
-          summary: `Discovered ${prospect.name}, ${prospect.title} at ${prospect.company} — ${source}`,
-          status: "success",
-          versionId: campaign.activeVersionId,
-          tokens: 150 + Math.floor(Math.random() * 200),
-        });
-      }
-    }
-
-    // --- one agent step ---
-    const step = decideStep(campaign, useSdr.getState().prospects);
-    if (!step) continue;
-
-    const { prospect } = step;
-    const touched =
-      step.channel && !prospect.touched.includes(step.channel) && step.status === "success"
-        ? [...prospect.touched, step.channel]
-        : prospect.touched;
-
-    state.advanceProspect(prospect.id, {
-      state: step.nextState,
-      lastAction: step.lastAction,
-      touched,
-      ...(step.fitScore !== undefined ? { fitScore: step.fitScore } : {}),
-    });
-
-    state.pushEvent({
-      campaignId: campaign.id,
-      agent: step.agent,
-      channel: step.channel,
-      prospectId: prospect.id,
-      prospectName: prospect.name,
-      summary: step.summary,
-      status: step.status,
-      versionId: campaign.activeVersionId,
-      tokens: step.tokens,
-    });
+  tickInFlight = true;
+  try {
+    await Promise.all(state.campaigns.map((campaign) => runCampaignTick(campaign)));
+  } finally {
+    tickInFlight = false;
   }
+}
+
+async function runCampaignTick(campaign: Campaign) {
+  const store = useSdr.getState();
+
+  // --- lead discovery ---
+  if (campaign.status === "live") {
+    const count = store.prospects.filter((p) => p.campaignId === campaign.id).length;
+    if (count < MAX_PROSPECTS_PER_CAMPAIGN && Math.random() < 0.4) {
+      const { prospect, source } = discoverProspect(campaign);
+      store.addProspect(prospect);
+      store.pushEvent({
+        campaignId: campaign.id,
+        agent: "research",
+        prospectId: prospect.id,
+        prospectName: prospect.name,
+        summary: `Discovered ${prospect.name}, ${prospect.title} at ${prospect.company} — ${source}`,
+        status: "success",
+        versionId: campaign.activeVersionId,
+        tokens: 150 + Math.floor(Math.random() * 200),
+        source: "simulated",
+      });
+    }
+  }
+
+  // --- one agent step ---
+  const step = decideStep(campaign, useSdr.getState().prospects);
+  if (!step) return;
+
+  const outcome = await executeStep(campaign, step, useSdr.getState().liveAgents);
+  const { prospect } = step;
+
+  const touched =
+    step.channel && !prospect.touched.includes(step.channel) && outcome.status === "success"
+      ? [...prospect.touched, step.channel]
+      : prospect.touched;
+
+  // Re-read the store: a live call may have taken seconds, and the operator
+  // could have paused the campaign in the meantime.
+  const latest = useSdr.getState();
+  const current = latest.campaigns.find((c) => c.id === campaign.id);
+  if (!current || current.status !== "live" || latest.killSwitch) return;
+
+  latest.advanceProspect(prospect.id, {
+    state: outcome.nextState,
+    lastAction: outcome.lastAction,
+    touched,
+    ...(outcome.fitScore !== undefined ? { fitScore: outcome.fitScore } : {}),
+  });
+
+  latest.pushEvent({
+    campaignId: campaign.id,
+    agent: step.agent,
+    channel: step.channel,
+    prospectId: prospect.id,
+    prospectName: prospect.name,
+    summary: outcome.summary,
+    status: outcome.status,
+    versionId: campaign.activeVersionId,
+    tokens: outcome.tokens,
+    source: outcome.source,
+    message: outcome.message,
+    latencyMs: outcome.latencyMs,
+  });
 }

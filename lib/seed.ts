@@ -374,6 +374,7 @@ export function buildSeedActivity(now: number) {
       status,
       versionId: activeVersion[campaignId],
       tokens: 400 + ((i * 137) % 900),
+      source: "simulated" as const,
     };
   });
 }

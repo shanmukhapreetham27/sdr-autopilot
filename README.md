@@ -21,8 +21,10 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Prompt / AI-harness versioning, rollback, audit trail | ✅ Working |
 | Cross-campaign duplicate-prospect conflict detection | ✅ Working |
 | Campaign creation and duplication into an A/B variant | ✅ Working |
-| Live agent execution loop with funnel progression | ✅ Working (locally simulated — see below) |
-| Real LLM calls, RAG retrieval, Apollo / Gmail / Twilio / LinkedIn | ⛔ Not yet wired |
+| Live agent execution loop with funnel progression | ✅ Working |
+| DronaHQ agent integration (6 agents over webhooks) | ✅ Working — wired per agent via env vars |
+| Voice SDR agent | ⛔ Out of scope for this build |
+| Apollo / Gmail / Twilio / LinkedIn sending | ⛔ Not yet wired |
 | Authentication, rep assignment, persistent database | ⛔ Out of scope for this build |
 
 ### About the agent loop
@@ -31,15 +33,83 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 chance to act: it may discover a new lead, research it, score it against the campaign ICP,
 draft outreach on an open channel, follow up, or escalate to a human.
 
-The step *decisions* are currently generated locally rather than by a live model. Everything
-around them is real: campaign status, per-agent pause, per-channel pause and the global kill
-switch are all genuinely enforced before a step can produce an action, prospects really move
-through the funnel, rejections and failures really happen, and every action is written to the
-activity log with the harness version that produced it.
+`decideStep()` picks which prospect moves, which agent owns the move, and which channel is
+open — enforcing campaign status, per-agent pause, per-channel pause and the global kill
+switch before any action can be produced.
 
-`decideStep()` returns an `AgentStep` — the exact shape a real agent backend would return.
-Wiring in live LLM and tool calls means replacing the body of that one function; the store,
-the UI and the activity log do not change.
+How that step is then *executed* depends on configuration:
+
+- If the owning agent has a **DronaHQ webhook** configured, the real published agent is
+  called and its structured JSON response drives the outcome — the summary, the generated
+  message, the ICP score, and whether the prospect advances, is rejected, or is escalated.
+- Otherwise the step falls back to a locally generated narration, so the control plane is
+  fully demonstrable without every agent wired.
+
+Every activity event records which of the two actually happened (`source: "dronahq"` or
+`"simulated"`), and the UI labels it. **The app never claims a DronaHQ agent ran when it
+did not.** The sidebar shows `n / 6 wired` at all times.
+
+### How the DronaHQ integration works
+
+Each agent is a published DronaHQ agent with a **Webhook Trigger** attached.
+
+```
+Browser  ──POST──▶  /api/agents/<agent>  ──POST + api-key header──▶  DronaHQ webhook
+                    (Next.js route)                                   (published agent)
+                          ▲                                                  │
+                          └────────── structured JSON response ◀─────────────┘
+```
+
+The API key never reaches the browser: `lib/dronahq.ts` is server-only and attaches the
+`api-key` header inside the route handler.
+
+**Request** — every agent receives this payload (configure the agent's Webhook Input
+against these field names):
+
+```json
+{
+  "task": "personalisation",
+  "thread_id": "<campaign_id>:<prospect_id>",
+  "campaign": {
+    "id": "camp_ussaas",
+    "name": "US SaaS CTO Outreach",
+    "system_prompt": "...",
+    "agent_prompt": "...",
+    "icp_label": "US SaaS CTO",
+    "geography": "United States",
+    "target_roles": ["CTO", "VP Engineering"],
+    "company_criteria": "...",
+    "exclusions": "...",
+    "open_channels": ["email", "linkedin"]
+  },
+  "prospect": {
+    "id": "p_us_1", "name": "Dana Whitfield", "title": "CTO",
+    "company": "Loomwork", "location": "Austin, TX",
+    "email": "...", "linkedin": "...",
+    "stage": "qualified", "fit_score": 91,
+    "channels_touched": ["email"], "last_action": "..."
+  }
+}
+```
+
+**Response** — configure the agent's Response as **Standard** with a JSON Schema. Any of
+these fields are understood; all are optional:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `summary` | string | One line for the activity log |
+| `message` | string | The generated outreach copy, shown expandable in the feed |
+| `score` | number | ICP fit score, 0-100 |
+| `advance` | boolean | `false` holds the prospect; on the ICP agent it means rejected |
+| `escalate` | boolean | `true` marks the action as needing a human |
+| `channel` | string | Channel the agent chose |
+
+Responses are parsed leniently (`normaliseAgentResult`): common aliases are accepted, the
+payload may be wrapped in `result` / `data` / `output`, and a malformed response degrades
+to a logged event rather than crashing the run.
+
+`thread_id` is `<campaign_id>:<prospect_id>`, so an agent keeps context across touches to
+the same person without leaking one campaign's history into another.
 
 ---
 
@@ -50,8 +120,11 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. No environment variables or API keys are needed for the current
-build — demo data is seeded on first load.
+Open http://localhost:3000. Demo data is seeded on first load. No environment variables are
+required — every agent without a configured webhook runs simulated.
+
+To wire real DronaHQ agents, copy `.env.example` to `.env.local` and fill in the webhook
+URL and API key for each agent. Check `/api/integrations/status` to confirm what is live.
 
 ```bash
 npm run build   # production build
@@ -61,15 +134,17 @@ npx tsc --noEmit  # typecheck
 
 ### Environment variables
 
-None required today. When the live agent backend lands, the following will be needed:
+All optional. Any agent left unset runs simulated.
 
 | Variable | Purpose |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | LLM calls for the agent harness |
-| `APOLLO_API_KEY` | Lead discovery and enrichment |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | SMS and voice |
-| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | Email sending and reply reading |
-| `DATABASE_URL` | Postgres + pgvector for campaign data and the RAG knowledge base |
+| `DRONAHQ_API_KEY` | Workspace API key, used for any agent without its own key |
+| `DRONAHQ_ICP_FITMENT_URL` / `_KEY` | ICP Fitment Agent webhook |
+| `DRONAHQ_RESEARCH_URL` / `_KEY` | Lead Research Agent webhook |
+| `DRONAHQ_OUTREACH_STRATEGY_URL` / `_KEY` | Outreach Strategy Agent webhook |
+| `DRONAHQ_PERSONALISATION_URL` / `_KEY` | Personalisation Agent webhook |
+| `DRONAHQ_CONVERSATION_URL` / `_KEY` | Conversation Agent webhook |
+| `DRONAHQ_FOLLOWUP_URL` / `_KEY` | Follow-up Agent webhook |
 
 Secrets are never committed. `.env*` files are gitignored.
 
@@ -101,12 +176,20 @@ Browser
          │
          └── decideStep()            Gates: status, agent pause, channel pause, kill switch
                 │
-                └── AgentStep  ──►   store.advanceProspect() + store.pushEvent()
+                ├── agent wired?  ──▶  POST /api/agents/<agent>   (Next.js route, server)
+                │                            │
+                │                            └──▶  DronaHQ published agent (webhook)
+                │                                      │
+                │                       structured JSON ◀┘
+                │
+                └── otherwise      ──▶  local fallback step
+                       │
+                       └──▶  store.advanceProspect() + store.pushEvent()
 ```
 
 Every state change flows through the store. The agent loop cannot bypass a control-plane
 gate, because the gates are checked inside `decideStep()` before any action is produced —
-the same function the real backend will implement.
+whether that action is executed by DronaHQ or by the local fallback.
 
 ---
 
@@ -129,11 +212,17 @@ components/
   HarnessTab.tsx            Prompt versioning: view, edit, save, compare, roll back
   ui.tsx                    Shared primitives (Card, Stat, StatusPill, tags, Button)
 
+app/api/
+  agents/[agent]/route.ts   Server proxy to a DronaHQ agent — attaches the api-key header
+  integrations/status/      Reports which agents are wired (names and booleans only)
+
 lib/
   types.ts                  Domain model: Campaign, Prospect, ActivityEvent, PromptVersion
   seed.ts                   Deterministic demo data — three concurrent campaigns
   store.ts                  Zustand store + derived selectors (funnel, metrics, conflicts)
   simulator.ts              Agent execution loop and step decisions
+  dronahq.ts                SERVER ONLY. DronaHQ webhook client, request/response contract
+  agentClient.ts            Browser-side bridge; types only from dronahq.ts, never secrets
 ```
 
 Why this split: `lib/` holds everything that would survive moving to a server — the domain
@@ -167,7 +256,9 @@ The India BFSI campaign ships Paused on purpose, so the difference is visible on
 
 ## Known limitations
 
-- Agent step decisions are generated locally, not by a live model (see above).
+- Agents without a configured DronaHQ webhook fall back to locally generated steps.
+- The Voice SDR agent is not wired to DronaHQ in this build.
+- Outreach is generated but not actually delivered: no Gmail, Twilio or LinkedIn sending yet.
 - State is per-browser; two people opening the deployed URL each get their own demo.
 - No authentication — the app assumes a single trusted operator.
 - Representative assignment and offboarding reassignment are not implemented.

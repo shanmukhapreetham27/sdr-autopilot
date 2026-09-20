@@ -51,6 +51,24 @@ export const AGENTS: AgentDef[] = [
   { key: "followup", name: "Follow-up Agent", responsibility: "Decides when and how to follow up, or when to stop." },
 ];
 
+/**
+ * Agents that can be driven by a real DronaHQ webhook today.
+ *
+ * Lives here rather than in `lib/dronahq.ts` so client components can import
+ * it without pulling the env-reading server module into the browser bundle.
+ * The Voice SDR agent is deliberately excluded from this build.
+ */
+export const LIVE_CAPABLE_AGENTS = [
+  "icp_fitment",
+  "research",
+  "outreach_strategy",
+  "personalisation",
+  "conversation",
+  "followup",
+] as const satisfies readonly AgentKey[];
+
+export type LiveAgentKey = (typeof LIVE_CAPABLE_AGENTS)[number];
+
 export interface AgentConfig {
   key: AgentKey;
   enabled: boolean;
@@ -147,6 +165,15 @@ export interface ActivityEvent {
   versionId: string;
   /** Rough token cost of the LLM call behind this action. */
   tokens: number;
+  /**
+   * Where this action actually came from. Recorded so the UI never claims a
+   * DronaHQ agent ran when it did not.
+   */
+  source: "dronahq" | "simulated";
+  /** Full content the agent generated, when it produced something sendable. */
+  message?: string;
+  /** Round-trip time of the DronaHQ call, in ms. */
+  latencyMs?: number;
 }
 
 /** Derived, never stored: computed from the campaign's prospects. */

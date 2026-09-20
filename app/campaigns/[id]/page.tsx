@@ -125,6 +125,7 @@ function OverviewTab({
 }) {
   const toggleAgentPause = useSdr((s) => s.toggleAgentPause);
   const toggleChannelPause = useSdr((s) => s.toggleChannelPause);
+  const liveAgents = useSdr((s) => s.liveAgents);
 
   return (
     <div className="space-y-4">
@@ -164,6 +165,13 @@ function OverviewTab({
                         }`}
                       />
                       <span className="text-sm text-slate-200">{def.name}</span>
+                      {liveAgents.includes(def.key) ? (
+                        <span className="rounded border border-violet-500/30 bg-violet-500/10 px-1 py-0.5 text-[9px] font-medium text-violet-300">
+                          DronaHQ
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-slate-700">simulated</span>
+                      )}
                       {!cfg.enabled && (
                         <span className="text-[10px] text-slate-600">disabled for this campaign</span>
                       )}

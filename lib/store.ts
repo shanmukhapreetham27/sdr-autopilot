@@ -28,6 +28,13 @@ export interface SdrState {
   activity: ActivityEvent[];
   /** Global kill switch: halts every autonomous external action, platform-wide. */
   killSwitch: boolean;
+  /**
+   * Agents backed by a real DronaHQ webhook, as reported by the server.
+   * Not persisted — it is re-read on every load so it always reflects the
+   * environment the app is actually deployed with.
+   */
+  liveAgents: AgentKey[];
+  setLiveAgents: (agents: AgentKey[]) => void;
 
   // --- campaign lifecycle ---
   createCampaign: (input: NewCampaignInput) => string;
@@ -68,6 +75,7 @@ function initialState() {
     prospects: SEED_PROSPECTS,
     activity: buildSeedActivity(Date.parse("2026-09-20T09:00:00.000Z")),
     killSwitch: false,
+    liveAgents: [] as AgentKey[],
   };
 }
 
@@ -147,6 +155,7 @@ export const useSdr = create<SdrState>()(
             status: "success",
             versionId: campaign.activeVersionId,
             tokens: 0,
+            source: "simulated" as const,
           };
           return {
             campaigns: s.campaigns.map((c) =>
@@ -222,6 +231,7 @@ export const useSdr = create<SdrState>()(
               status: "success" as const,
               versionId: "-",
               tokens: 0,
+            source: "simulated" as const,
             },
             ...s.activity,
           ].slice(0, MAX_EVENTS),
@@ -270,6 +280,7 @@ export const useSdr = create<SdrState>()(
                 status: "success" as const,
                 versionId,
                 tokens: 0,
+            source: "simulated" as const,
               },
               ...s.activity,
             ].slice(0, MAX_EVENTS),
@@ -290,11 +301,21 @@ export const useSdr = create<SdrState>()(
 
       addProspect: (prospect) => set((s) => ({ prospects: [...s.prospects, prospect] })),
 
+      setLiveAgents: (agents) => set({ liveAgents: agents }),
+
       resetDemo: () => set(initialState()),
     }),
     {
       name: "sdr-autopilot-v1",
-      version: 1,
+      version: 2,
+      // `liveAgents` reflects server environment variables, so it must be
+      // re-read on every load rather than restored from a stale cache.
+      partialize: ({ campaigns, prospects, activity, killSwitch }) => ({
+        campaigns,
+        prospects,
+        activity,
+        killSwitch,
+      }),
     },
   ),
 );
