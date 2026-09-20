@@ -79,9 +79,44 @@ function channelConfig(campaign: Campaign): Record<Channel, boolean> {
   };
 }
 
+/**
+ * Wall-clock seconds that count as one day of campaign time.
+ *
+ * Cadence policy is written in days — "minimum 3 days between touches" — but
+ * a demo runs for minutes. On real timestamps every prospect is permanently
+ * 0 days since its last touch, so the Follow-up Agent correctly returns
+ * WAIT / CADENCE_NOT_ELAPSED every single time and the sequence never moves.
+ * The agent was not wrong; it was being asked an impossible question.
+ *
+ * Compressing the clock is what lets a cadence rule actually be exercised:
+ * at 30s per day a 3-day gap elapses in 90 seconds, a 14-day gap in seven
+ * minutes. A prospect touched moments ago still waits; one touched earlier
+ * in the session becomes due. That is the whole point.
+ */
+const SECONDS_PER_CAMPAIGN_DAY = 30;
+
+/**
+ * Ceiling on reported staleness.
+ *
+ * Compression cuts both ways: it turns a prospect last touched an hour ago
+ * into one untouched for four years, and "1550 days since last touch" is not
+ * a number any cadence rule was written against. Past this point the exact
+ * figure carries no decision value — every rule already reads it as long
+ * overdue — so it is reported as a ceiling rather than an absurdity.
+ */
+const MAX_REPORTED_DAYS = 90;
+
+/** Elapsed campaign days, on the compressed clock. */
 function daysSince(iso?: string): number | null {
   if (!iso) return null;
-  return Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  const days = Math.floor((Date.now() - Date.parse(iso)) / (SECONDS_PER_CAMPAIGN_DAY * 1000));
+  return Math.min(days, MAX_REPORTED_DAYS);
+}
+
+/** The same instant expressed on the compressed clock, so the two agree. */
+function campaignDate(iso: string | undefined, days: number | null): string {
+  if (!iso || days === null) return "";
+  return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
 /** Compact prospect record, the shape the agents' dossiers and guards expect. */
@@ -105,13 +140,20 @@ function prospectRecord(p: Prospect) {
 
 /** Touch history, the state the strategy and follow-up agents reason over. */
 function touchState(p: Prospect) {
+  const days = daysSince(p.lastTouchAt);
   return {
     touches: p.touchCount,
     last_channel: p.touched.at(-1) ?? "",
-    last_touch_date: p.lastTouchAt ?? "",
-    days_since_last_touch: daysSince(p.lastTouchAt),
+    // Stated on the compressed clock too. A date of "today" next to
+    // "4 days since last touch" is a contradiction the agent has to
+    // resolve, and it resolves it by trusting the date and waiting.
+    last_touch_date: campaignDate(p.lastTouchAt, days),
+    days_since_last_touch: days,
     angles_used: p.anglesUsed,
-    replied: false,
+    // Was hardcoded false, which told the Follow-up Agent that nobody had
+    // ever replied — including prospects sitting at 'engaged' precisely
+    // because they did. It decides between chasing and reviving on this.
+    replied: Boolean(p.lastReply),
     email_flagged_invalid: false,
   };
 }
@@ -127,10 +169,21 @@ export function buildRequest(
   // Every agent receives these three. `system` and `prompt_version` are what
   // make one shared set of agents behave differently per campaign, and let an
   // action be traced back to the harness version that produced it.
+  const now = new Date();
   const base = {
     system: version?.systemPrompt ?? "",
     campaign_name: campaign.name,
     prompt_version: version ? `v${version.version}` : "v1",
+    /**
+     * Every date in this payload is relative to this one.
+     *
+     * Without it a cadence agent computes "next permitted contact:
+     * 2026-09-09", has no reference for today, assumes that date is still
+     * ahead and returns WAIT — even when the date passed eleven days ago and
+     * its own reasoning says the next action is to follow up. It was not
+     * being stubborn; it was never told what time it is.
+     */
+    as_of: now.toISOString(),
   };
 
   switch (task) {
@@ -256,7 +309,11 @@ export function buildRequest(
         ].join("\n"),
         stop_rules: policy.stopPolicy,
         revival_policy: "Revive only on a dossier signal that was not present when the sequence paused.",
-        follow_up_cadence: `Minimum ${policy.minDaysBetweenTouches} days between touches, widening as the sequence progresses. Maximum ${policy.maxTouches} touches.`,
+        follow_up_cadence:
+          `Today is ${now.toISOString().slice(0, 10)}. ` +
+          `Minimum ${policy.minDaysBetweenTouches} days between touches, widening as the sequence ` +
+          `progresses. Maximum ${policy.maxTouches} touches. ` +
+          `Compare any permitted-contact date you derive against today before deciding to wait.`,
       };
   }
 }
