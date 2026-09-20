@@ -510,7 +510,11 @@ export function findConflicts(prospects: Prospect[], campaigns: Campaign[]) {
   }
   const liveIds = new Set(campaigns.filter((c) => c.status === "live").map((c) => c.id));
   return [...byEmail.values()]
-    .filter((group) => group.length > 1)
+    // Only a conflict when DIFFERENT campaigns target the same person. Two
+    // records of one person inside a single campaign is a deduplication bug,
+    // not a cross-campaign conflict, and reporting it as one produced
+    // "targeted by X and X".
+    .filter((group) => new Set(group.map((p) => p.campaignId)).size > 1)
     .map((group) => ({
       email: group[0].email,
       name: group[0].name,

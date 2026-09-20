@@ -643,18 +643,30 @@ async function runCampaignTick(campaign: Campaign) {
     const count = store.prospects.filter((p) => p.campaignId === campaign.id).length;
     if (count < MAX_PROSPECTS_PER_CAMPAIGN && Math.random() < 0.4) {
       const { prospect, source } = discoverProspect(campaign);
-      store.addProspect(prospect);
-      store.pushEvent({
-        campaignId: campaign.id,
-        agent: "research",
-        prospectId: prospect.id,
-        prospectName: prospect.name,
-        summary: `Discovered ${prospect.name}, ${prospect.title} at ${prospect.company} — ${source}`,
-        status: "success",
-        versionId: campaign.activeVersionId,
-        tokens: 150 + Math.floor(Math.random() * 200),
-        source: "simulated",
-      });
+
+      // Names and companies come from finite pools, so the same person can
+      // surface twice. Rediscovering someone already in this campaign is a
+      // no-op: a real lead source deduplicates before handing a lead over,
+      // and a duplicate here would be contacted twice.
+      const alreadyKnown = store.prospects.some(
+        (p) => p.campaignId === campaign.id && p.email === prospect.email,
+      );
+
+      // Skip only the duplicate, not the rest of this campaign's tick.
+      if (!alreadyKnown) {
+        store.addProspect(prospect);
+        store.pushEvent({
+          campaignId: campaign.id,
+          agent: "research",
+          prospectId: prospect.id,
+          prospectName: prospect.name,
+          summary: `Discovered ${prospect.name}, ${prospect.title} at ${prospect.company} — ${source}`,
+          status: "success",
+          versionId: campaign.activeVersionId,
+          tokens: 150 + Math.floor(Math.random() * 200),
+          source: "simulated",
+        });
+      }
     }
   }
 
