@@ -277,6 +277,45 @@ a message the agent marked `requires_review` waits for a human.
 
 ---
 
+## Database
+
+Neon Postgres. Schema lives in `db/migrations/`, applied in filename order and
+recorded in `schema_migrations`, so re-running is a no-op.
+
+```bash
+npm run db:migrate   # apply pending migrations
+npm run db:seed      # truncate and reseed from lib/seed.ts
+npm run db:reset     # DESTRUCTIVE: drop the public schema (needs --yes)
+npm run db:setup     # reset + migrate + seed, in one go
+```
+
+`db/seed.mts` imports `lib/seed.ts` directly rather than keeping a parallel
+SQL copy, so the demo data has exactly one definition.
+
+### Schema
+
+| Table | Holds |
+| --- | --- |
+| `campaigns` | Identity, status, ICP, daily limit, and the agent policy as JSONB |
+| `prompt_versions` | Immutable harness history; campaigns point at the active one |
+| `campaign_channels` | Per-channel enabled/paused — channel pause is independent |
+| `campaign_agents` | Per-agent enabled/paused — agent pause is independent |
+| `prospects` | Funnel state, fit score, sequence state, research dossier |
+| `activity_events` | Every agent action, with source, harness version and latency |
+| `platform_control` | Single row, enforced by a check constraint: the global kill switch |
+
+Two decisions worth noting. Channel and agent state are separate tables rather
+than columns, because the problem statement treats campaign pause, agent pause
+and channel pause as independent levers and each is a targeted write. And
+`activity_events.campaign_id` is deliberately not a foreign key, because
+platform-wide events such as the kill switch belong to no single campaign.
+
+> **The app does not read from Postgres yet.** State still lives in the
+> browser via Zustand. The schema and seed are in place; wiring the store to
+> the database is the next step.
+
+---
+
 ## Tech stack
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**

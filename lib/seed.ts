@@ -1,4 +1,5 @@
 import type {
+  ActivityEvent,
   AgentKey,
   Campaign,
   CampaignPolicy,
@@ -430,7 +431,7 @@ const SEED_EVENT_ROWS: SeedEvent[] = [
 ];
 
 /** Built at runtime relative to `now` so the feed always looks fresh. */
-export function buildSeedActivity(now: number) {
+export function buildSeedActivity(now: number): ActivityEvent[] {
   const activeVersion: Record<string, string> = {};
   for (const c of SEED_CAMPAIGNS) activeVersion[c.id] = c.activeVersionId;
 
