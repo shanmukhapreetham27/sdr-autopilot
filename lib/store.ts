@@ -65,6 +65,7 @@ export interface SdrState {
 
   // --- campaign lifecycle ---
   hydrate: () => Promise<void>;
+  reconcile: () => Promise<void>;
   createCampaign: (input: NewCampaignInput) => string;
   setCampaignStatus: (campaignId: string, status: CampaignStatus) => void;
   duplicateCampaign: (campaignId: string) => string | null;
@@ -112,6 +113,20 @@ export interface NewCampaignInput {
 // ---------------------------------------------------------------------------
 
 /**
+ * Writes currently in flight, and when the last one settled.
+ *
+ * The reconcile poll uses these to stay out of the way: while a write is
+ * outstanding the local copy is deliberately ahead of the server, and
+ * replacing it with a snapshot taken before that write landed would make the
+ * UI flicker backwards.
+ */
+let writesInFlight = 0;
+let lastWriteAt = 0;
+
+/** How long after a write to leave the local copy alone. */
+const WRITE_QUIET_MS = 2_000;
+
+/**
  * Post a command without blocking the caller.
  *
  * The UI has already applied the change. If the write fails the store records
@@ -119,6 +134,8 @@ export interface NewCampaignInput {
  * no longer backed by the database rather than the failure passing silently.
  */
 function dispatch(cmd: Command) {
+  writesInFlight += 1;
+  lastWriteAt = Date.now();
   void fetch("/api/state", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -134,7 +151,18 @@ function dispatch(cmd: Command) {
         sync: "offline",
         lastError: err instanceof Error ? err.message : String(err),
       });
+    })
+    .finally(() => {
+      writesInFlight -= 1;
+      lastWriteAt = Date.now();
     });
+}
+
+async function fetchSnapshot(): Promise<StateSnapshot> {
+  const res = await fetch("/api/state", { cache: "no-store" });
+  const json = (await res.json()) as { ok: boolean; state?: StateSnapshot; error?: string };
+  if (!json.ok || !json.state) throw new Error(json.error ?? `HTTP ${res.status}`);
+  return json.state;
 }
 
 export const useSdr = create<SdrState>()((set, get) => ({
@@ -152,10 +180,28 @@ export const useSdr = create<SdrState>()((set, get) => ({
 
   hydrate: async () => {
     try {
-      const res = await fetch("/api/state", { cache: "no-store" });
-      const json = (await res.json()) as { ok: boolean; state?: StateSnapshot; error?: string };
-      if (!json.ok || !json.state) throw new Error(json.error ?? `HTTP ${res.status}`);
-      set({ ...json.state, sync: "ready", lastError: null });
+      set({ ...(await fetchSnapshot()), sync: "ready", lastError: null });
+    } catch (err) {
+      set({ sync: "offline", lastError: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  /**
+   * Re-read the database and replace the local copy.
+   *
+   * Without this the browser only ever reads on load, which has two
+   * consequences: a tab open across a reseed keeps its deleted records and
+   * writes them back, and two people on the same deployment silently diverge
+   * because neither sees the other's changes.
+   *
+   * Skipped while a write is outstanding or has just landed, so an optimistic
+   * update is never reverted by a snapshot taken before it reached the server.
+   */
+  reconcile: async () => {
+    if (writesInFlight > 0) return;
+    if (Date.now() - lastWriteAt < WRITE_QUIET_MS) return;
+    try {
+      set({ ...(await fetchSnapshot()), sync: "ready", lastError: null });
     } catch (err) {
       set({ sync: "offline", lastError: err instanceof Error ? err.message : String(err) });
     }

@@ -30,6 +30,7 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Gmail sending (redirected to a demo inbox) | ✅ Working |
 | Apollo / Twilio / LinkedIn sending | ⛔ Not wired |
 | Persistent shared state (Neon Postgres) | ✅ Working |
+| Multi-tab / multi-visitor convergence | ✅ Working — 15s reconcile |
 | Authentication, rep assignment | ⛔ Out of scope for this build |
 
 ### About the agent loop
@@ -432,6 +433,14 @@ no longer backed by the database.
 
 Each command runs in a transaction, because several of them write more than
 one table — creating a campaign writes four.
+
+Every visible tab re-reads the snapshot on a 15s timer. Without it a browser
+only ever reads on load, which has two consequences: a tab open across a
+reseed keeps showing records the database no longer has and writes them back,
+and two people on the same deployment silently diverge because neither sees
+the other's changes. The poll is skipped while a write is outstanding or has
+just landed, so an optimistic update is never reverted by a snapshot taken
+before it reached the server. Convergence is eventual, within one interval.
 
 `resetDemo` and `npm run db:seed` share one `reseed()` implementation in
 `lib/db.ts`, so the CLI and the app cannot seed differently.

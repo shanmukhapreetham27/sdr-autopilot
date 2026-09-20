@@ -141,6 +141,28 @@ function useHydrate(enabled: boolean) {
   }, [enabled, hydrate]);
 }
 
+/** How often to re-read the database while the tab is in front. */
+const RECONCILE_MS = 15_000;
+
+/**
+ * Keep this tab's copy in step with the database.
+ *
+ * The browser is the writer, so without this a tab only ever reads once: it
+ * would keep showing records a reseed deleted, and two people on the same
+ * deployment would diverge because neither sees the other's changes.
+ *
+ * Only while visible — a background tab has nobody to show a stale number to,
+ * and polling it is wasted work.
+ */
+function useReconcile(enabled: boolean) {
+  const reconcile = useSdr((s) => s.reconcile);
+  useEffect(() => {
+    if (!enabled) return;
+    const id = setInterval(() => void reconcile(), RECONCILE_MS);
+    return () => clearInterval(id);
+  }, [enabled, reconcile]);
+}
+
 /**
  * Mailer state, polled so the send counter stays current while agents work.
  * Read-only: the recipient is decided server-side and cannot be set here.
@@ -245,6 +267,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // these hold: state is loaded, the platform is not halted, the operator has
   // not paused it, this tab is visible, and they are still around.
   useAgentLoop(reason === "running");
+
+  // Re-read the database on a timer, independently of the loop: a tab with
+  // the loop paused is exactly the tab most likely to be showing stale data.
+  useReconcile(mounted && sync !== "loading" && tabVisible);
 
   const wiredCount = liveAgents.length;
 
