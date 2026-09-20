@@ -25,7 +25,8 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | DronaHQ agent integration — all 6 agents live | ✅ Working, verified against the published endpoints |
 | Research brief chained into downstream agents (grounding) | ✅ Working |
 | Voice SDR agent | ⛔ Out of scope for this build |
-| Apollo / Gmail / Twilio / LinkedIn sending | ⛔ Not yet wired |
+| Gmail sending (redirected to a demo inbox) | ✅ Working |
+| Apollo / Twilio / LinkedIn sending | ⛔ Not wired |
 | Authentication, rep assignment, persistent database | ⛔ Out of scope for this build |
 
 ### About the agent loop
@@ -229,6 +230,50 @@ Real people's names and email addresses are deliberately kept out of a system th
 outbound outreach. Nothing is ever actually delivered — there is no Gmail, Twilio or
 LinkedIn sending in this build — but synthetic contacts mean that stays true even by
 accident.
+
+---
+
+## Email delivery
+
+Agent-written emails are really sent, through the Gmail API with the
+`gmail.send` scope. They are **always redirected** to `DEMO_EMAIL_REDIRECT_TO`.
+
+### Why redirect
+
+Prospects in this system are synthetic personas at **real** company domains
+(`dana.whitfield@linear.app`). Delivering to those addresses would bounce off
+real corporate mail servers — enough of that and the sending account is
+suspended — and could reach a real person if an address happened to resolve.
+
+So `lib/gmail.ts` has no code path that sends to `prospect.email`. The
+intended recipient survives only as labelling:
+
+- the subject is prefixed `[DEMO → Dana Whitfield]`
+- an `X-Intended-To` header carries the original address
+- a footer states the message was redirected and not delivered to the target
+
+If `DEMO_EMAIL_REDIRECT_TO` is unset, **sending is refused** rather than
+falling back to the prospect address.
+
+### Volume guards
+
+The agent loop can draft a message every few seconds, which would exhaust
+Gmail's daily quota and bury the demo inbox. Two limits apply, enforced
+server-side:
+
+| Guard | Default | Env |
+| --- | --- | --- |
+| Maximum sends per server instance | 25 | `EMAIL_MAX_SENDS` |
+| Minimum interval between sends | 15s | `EMAIL_MIN_INTERVAL_MS` |
+
+A refused send is logged as a normal activity event and the campaign carries
+on. The sidebar shows the redirect address and the remaining allowance.
+
+### What triggers a send
+
+Only a **live Personalisation Agent result on the email channel** that the
+agent did not flag for review. Simulated steps have no real copy to send, and
+a message the agent marked `requires_review` waits for a human.
 
 ---
 

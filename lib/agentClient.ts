@@ -67,3 +67,53 @@ export async function invokeAgent(
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Email delivery
+// ---------------------------------------------------------------------------
+
+export interface MailerStatus {
+  configured: boolean;
+  redirectTo: string | null;
+  sent: number;
+  remaining: number;
+}
+
+export async function fetchMailerStatus(): Promise<MailerStatus | null> {
+  try {
+    const res = await fetch("/api/send/email", { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as MailerStatus;
+  } catch {
+    return null;
+  }
+}
+
+export type SendEmailResult =
+  | { ok: true; messageId: string; redirectedTo: string }
+  | { ok: false; error: string };
+
+/**
+ * Send one agent-generated email.
+ *
+ * The recipient is chosen server-side; `intendedTo` is carried only so the
+ * message can be labelled with who the agent actually wrote to.
+ */
+export async function sendAgentEmail(input: {
+  intendedTo: string;
+  intendedName: string;
+  subject: string;
+  body: string;
+  campaignName: string;
+}): Promise<SendEmailResult> {
+  try {
+    const res = await fetch("/api/send/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return (await res.json()) as SendEmailResult;
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}

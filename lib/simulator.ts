@@ -2,7 +2,12 @@
 
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
-import { buildAgentRequest, invokeAgent, type LiveAgentKey } from "./agentClient";
+import {
+  buildAgentRequest,
+  invokeAgent,
+  sendAgentEmail,
+  type LiveAgentKey,
+} from "./agentClient";
 
 /**
  * Agent execution loop.
@@ -506,6 +511,47 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
  */
 const inFlight = new Set<string>();
 
+/**
+ * Deliver an agent-written email, when there is a real one to deliver.
+ *
+ * Only fires for a live Personalisation Agent result on the email channel:
+ * a simulated step has no real copy to send, and a message the agent flagged
+ * for review must not go out before a human has seen it.
+ *
+ * Delivery is redirected server-side to the demo inbox; nothing reaches the
+ * prospect's address. Returns a line to append to the activity summary, or
+ * null when no send was attempted.
+ */
+async function maybeSendEmail(
+  campaign: Campaign,
+  step: AgentStep,
+  outcome: { source: "dronahq" | "simulated"; message?: string; status: string },
+): Promise<string | null> {
+  if (outcome.source !== "dronahq") return null;
+  if (step.agent !== "personalisation" || step.channel !== "email") return null;
+  if (outcome.status !== "success") return null;
+  if (!outcome.message?.trim()) return null;
+
+  // The agent's output carries "Subject: ..." on the first line when it
+  // produced one; split it back out for the real message headers.
+  const text = outcome.message;
+  const match = text.match(/^Subject:\s*(.+?)\n\n([\s\S]+)$/);
+  const subject = match ? match[1].trim() : `note for ${step.prospect.name}`;
+  const body = match ? match[2].trim() : text;
+
+  const result = await sendAgentEmail({
+    intendedTo: step.prospect.email,
+    intendedName: step.prospect.name,
+    subject,
+    body,
+    campaignName: campaign.name,
+  });
+
+  return result.ok
+    ? ` · email sent (${result.messageId.slice(0, 8)})`
+    : ` · email not sent: ${result.error}`;
+}
+
 /** One tick of the whole platform: every live campaign gets a chance to act. */
 export async function runTick() {
   const state = useSdr.getState();
@@ -562,6 +608,9 @@ async function runCampaignTick(campaign: Campaign) {
       ? [...prospect.touched, step.channel]
       : prospect.touched;
 
+  // Deliver the message, if this step produced a real one.
+  const deliveryNote = await maybeSendEmail(campaign, step, outcome);
+
   // Re-read the store: a live call may have taken seconds, and the operator
   // could have paused the campaign in the meantime.
   const latest = useSdr.getState();
@@ -592,7 +641,7 @@ async function runCampaignTick(campaign: Campaign) {
     channel: step.channel,
     prospectId: prospect.id,
     prospectName: prospect.name,
-    summary: outcome.summary,
+    summary: outcome.summary + (deliveryNote ?? ""),
     status: outcome.status,
     versionId: campaign.activeVersionId,
     tokens: outcome.tokens,

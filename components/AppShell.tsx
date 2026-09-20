@@ -2,10 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useSdr } from "@/lib/store";
 import { runTick } from "@/lib/simulator";
-import { fetchIntegrationStatus } from "@/lib/agentClient";
+import {
+  fetchIntegrationStatus,
+  fetchMailerStatus,
+  type MailerStatus,
+} from "@/lib/agentClient";
 import { LIVE_CAPABLE_AGENTS } from "@/lib/types";
 import { Button } from "./ui";
 
@@ -45,6 +49,30 @@ function useIntegrationStatus(enabled: boolean) {
 }
 
 /**
+ * Mailer state, polled so the send counter stays current while agents work.
+ * Read-only: the recipient is decided server-side and cannot be set here.
+ */
+function useMailerStatus(enabled: boolean) {
+  const [status, setStatus] = useState<MailerStatus | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const load = () => {
+      fetchMailerStatus().then((s) => {
+        if (!cancelled) setStatus(s);
+      });
+    };
+    load();
+    const id = setInterval(load, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [enabled]);
+  return status;
+}
+
+/**
  * False on the server and on the first client render, true afterwards.
  *
  * The store rehydrates from localStorage synchronously in the browser, so
@@ -72,6 +100,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   useAgentLoop(mounted);
   useIntegrationStatus(mounted);
+  const mailer = useMailerStatus(mounted);
 
   const campaigns = useSdr((s) => s.campaigns);
   const killSwitch = useSdr((s) => s.killSwitch);
@@ -154,6 +183,32 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <p className="mt-1 text-[10px] leading-snug text-slate-600">
                 No webhooks configured — agents are running simulated.
               </p>
+            )}
+          </div>
+
+          {/* Email delivery. Shows the redirect target explicitly: agent mail
+              is really sent, but never to a prospect's own address. */}
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5">
+            <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+              Email delivery
+            </div>
+            {mailer?.configured ? (
+              <>
+                <div className="mt-1 flex items-center gap-1.5 text-xs">
+                  <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                  <span className="text-sky-300">
+                    {mailer.sent} sent · {mailer.remaining} left
+                  </span>
+                </div>
+                <p className="mt-1 break-all text-[10px] leading-snug text-slate-600">
+                  All mail redirected to {mailer.redirectTo}
+                </p>
+              </>
+            ) : (
+              <div className="mt-1 flex items-center gap-1.5 text-xs">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-600" />
+                <span className="text-slate-500">Not configured</span>
+              </div>
             )}
           </div>
 
