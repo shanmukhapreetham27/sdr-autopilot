@@ -289,7 +289,7 @@ async function insertEvent(db: PoolClient, e: ActivityEvent) {
   );
 }
 
-/** Wipe the app's tables and reinsert the seed. Used by resetDemo and the CLI. */
+/** Wipe the app's tables and reinsert the seed. Used by the db:seed CLI. */
 export async function reseed(db: PoolClient) {
   await db.query(`
     truncate activity_events, prospects, campaign_agents, campaign_channels,
@@ -413,10 +413,6 @@ export async function applyCommand(cmd: Command): Promise<void> {
            )`,
           [EVENT_LIMIT * 2],
         );
-        break;
-
-      case "resetDemo":
-        await reseed(db);
         break;
     }
 

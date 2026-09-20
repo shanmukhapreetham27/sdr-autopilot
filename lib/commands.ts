@@ -30,8 +30,7 @@ export type Command =
   | { op: "activateVersion"; campaignId: string; versionId: string }
   | { op: "addProspect"; prospect: Prospect }
   | { op: "updateProspect"; prospectId: string; patch: Partial<Prospect> }
-  | { op: "pushEvent"; event: ActivityEvent }
-  | { op: "resetDemo" };
+  | { op: "pushEvent"; event: ActivityEvent };
 
 /** Full snapshot of platform state, as returned by GET /api/state. */
 export interface StateSnapshot {

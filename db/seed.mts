@@ -1,8 +1,9 @@
 /**
  * Seed the database from lib/seed.ts.
  *
- * A thin CLI wrapper around `reseed` in lib/db.ts, so the app's resetDemo and
- * this script share one implementation rather than drifting apart.
+ * A thin CLI wrapper around `reseed` in lib/db.ts. This is the only way to
+ * reseed: the in-app reset button was removed, because on a deployment with
+ * no auth anyone could have wiped the shared database with one click.
  *
  * Idempotent: reseeding truncates first, so re-running gives a clean known
  * state rather than duplicates.

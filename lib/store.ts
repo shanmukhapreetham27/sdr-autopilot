@@ -87,7 +87,6 @@ export interface SdrState {
   advanceProspect: (prospectId: string, patch: Partial<Prospect>) => void;
   addProspect: (prospect: Prospect) => void;
 
-  resetDemo: () => void;
 }
 
 function now() {
@@ -426,19 +425,6 @@ export const useSdr = create<SdrState>()((set, get) => ({
   addProspect: (prospect) => {
     set((s) => ({ prospects: [...s.prospects, prospect] }));
     dispatch({ op: "addProspect", prospect });
-  },
-
-  resetDemo: () => {
-    set({ sync: "loading" });
-    void fetch("/api/state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ op: "resetDemo" } satisfies Command),
-    })
-      // Reseeding replaces everything, so pull the new snapshot rather than
-      // trying to reconstruct it locally.
-      .then(() => get().hydrate())
-      .catch(() => set({ sync: "offline", lastError: "Reset failed" }));
   },
 }));
 

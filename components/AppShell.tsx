@@ -10,8 +10,6 @@ import {
   fetchMailerStatus,
   type MailerStatus,
 } from "@/lib/agentClient";
-import { LIVE_CAPABLE_AGENTS } from "@/lib/types";
-import { Button } from "./ui";
 
 /** How often the agent loop takes a step, in ms. */
 const TICK_MS = 2600;
@@ -242,8 +240,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const campaigns = useSdr((s) => s.campaigns);
   const killSwitch = useSdr((s) => s.killSwitch);
   const setKillSwitch = useSdr((s) => s.setKillSwitch);
-  const resetDemo = useSdr((s) => s.resetDemo);
-  const liveAgents = useSdr((s) => s.liveAgents);
   const sync = useSdr((s) => s.sync);
   const lastError = useSdr((s) => s.lastError);
   const loopEnabled = useSdr((s) => s.loopEnabled);
@@ -271,8 +267,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // Re-read the database on a timer, independently of the loop: a tab with
   // the loop paused is exactly the tab most likely to be showing stale data.
   useReconcile(mounted && sync !== "loading" && tabVisible);
-
-  const wiredCount = liveAgents.length;
 
   return (
     <div className="flex min-h-screen">
@@ -342,47 +336,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
             )}
           </div>
 
-          {/* Honest integration status: how many agents are actually backed
-              by a published DronaHQ agent right now. */}
-          <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-              DronaHQ agents
-            </div>
-            <div className="mt-1 flex items-center gap-1.5 text-xs">
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  wiredCount > 0 ? "bg-violet-400" : "bg-slate-600"
-                }`}
-              />
-              <span className={wiredCount > 0 ? "text-violet-300" : "text-slate-500"}>
-                {wiredCount} / {LIVE_CAPABLE_AGENTS.length} wired
-              </span>
-            </div>
-            {wiredCount === 0 && (
-              <p className="mt-1 text-[10px] leading-snug text-slate-600">
-                No webhooks configured — agents are running simulated.
-              </p>
-            )}
-          </div>
-
-          {/* Email delivery. Shows the redirect target explicitly: agent mail
-              is really sent, but never to a prospect's own address. */}
+          {/* Email delivery. Agent mail is really sent, but the server
+              redirects every message away from a prospect's own address. */}
           <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5">
             <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
               Email delivery
             </div>
             {mailer?.configured ? (
-              <>
-                <div className="mt-1 flex items-center gap-1.5 text-xs">
-                  <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
-                  <span className="text-sky-300">
-                    {mailer.sent} sent · {mailer.remaining} left
-                  </span>
-                </div>
-                <p className="mt-1 break-all text-[10px] leading-snug text-slate-600">
-                  All mail redirected to {mailer.redirectTo}
-                </p>
-              </>
+              <div className="mt-1 flex items-center gap-1.5 text-xs">
+                <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                <span className="text-sky-300">
+                  {mailer.sent} sent · {mailer.remaining} left
+                </span>
+              </div>
             ) : (
               <div className="mt-1 flex items-center gap-1.5 text-xs">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-600" />
@@ -390,10 +356,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             )}
           </div>
-
-          <Button variant="ghost" size="sm" onClick={resetDemo}>
-            ↺ Reset demo data
-          </Button>
         </div>
       </aside>
 

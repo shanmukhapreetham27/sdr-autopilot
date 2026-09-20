@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Build tooling for the deck, not application code.
+    "docs/**",
   ]),
 ]);
 
