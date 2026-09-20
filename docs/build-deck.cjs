@@ -191,7 +191,7 @@ function card(s, x, y, w, h, fill = PANEL) {
     s.addText(items.map((t, n) => ({
       text: t, options: { bullet: true, breakLine: n !== items.length - 1 },
     })), {
-      x: x + 0.45, y: 2.95, w: 5.0, h: 3.2, isTextBox: true, margin: 0,
+      x: x + 0.45, y: 2.95, w: 5.0, h: 3.2, isTextBox: true, margin: 0, valign: "top",
       fontFace: B, fontSize: 13.5, color: MUTED, paraSpaceAfter: 10, lineSpacing: 18,
     });
   });
@@ -235,9 +235,17 @@ function card(s, x, y, w, h, fill = PANEL) {
   box(9.1, 3.1, 3.6, 1.5, "DronaHQ Agents", "5 published agents called\nover Webhook Triggers", VIOLET);
   box(9.1, 4.75, 3.6, 1.5, "Gmail API", "send-only scope, every\nmessage redirected", AMBER);
 
+  // Extents must be non-negative: an upward arrow written as a negative
+  // height produces a file PowerPoint refuses to open, while python-pptx and
+  // the XSD validator both accept it. Normalise and flip instead.
   const arrow = (x1, y1, x2, y2) => {
     s.addShape(pres.ShapeType.line, {
-      x: x1, y: y1, w: x2 - x1, h: y2 - y1,
+      x: Math.min(x1, x2),
+      y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1),
+      h: Math.abs(y2 - y1),
+      flipH: x2 < x1,
+      flipV: y2 < y1,
       line: { color: DIM, width: 1.25, endArrowType: "triangle" },
     });
   };
@@ -356,7 +364,7 @@ function card(s, x, y, w, h, fill = PANEL) {
     { text: "Every call carries the campaign’s active system prompt and agent prompt.", options: { bullet: true, breakLine: true } },
     { text: "That is what makes one shared set of agents behave differently per campaign.", options: { bullet: true, breakLine: false } },
   ], {
-    x: 8.78, y: 2.5, w: 3.7, h: 3.7, isTextBox: true, margin: 0,
+    x: 8.78, y: 2.5, w: 3.7, h: 3.7, isTextBox: true, margin: 0, valign: "top",
     fontFace: B, fontSize: 12, color: MUTED, paraSpaceAfter: 10, lineSpacing: 16,
   });
 
@@ -505,7 +513,7 @@ function card(s, x, y, w, h, fill = PANEL) {
     s.addText(items.map((t, n) => ({
       text: t, options: { bullet: true, breakLine: n !== items.length - 1 },
     })), {
-      x, y: 2.35, w: 2.45, h: 3.8, isTextBox: true, margin: 0,
+      x, y: 2.35, w: 2.45, h: 3.8, isTextBox: true, margin: 0, valign: "top",
       fontFace: B, fontSize: 10.5, color: MUTED, paraSpaceAfter: 8, lineSpacing: 14,
     });
   });
