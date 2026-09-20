@@ -381,6 +381,7 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       fitScore: step.fitScore,
       message: undefined as string | undefined,
       latencyMs: undefined as number | undefined,
+      researchBrief: undefined as string | undefined,
     };
   }
 
@@ -405,6 +406,7 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       fitScore: undefined,
       message: undefined,
       latencyMs: outcome.ms,
+      researchBrief: undefined,
     };
   }
 
@@ -440,6 +442,9 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
     // produced, not just the one-line summary.
     message: r.text,
     latencyMs: outcome.ms,
+    // Persist the Research Agent's brief on the prospect so downstream
+    // agents write from verified context rather than inventing facts.
+    researchBrief: step.agent === "research" ? r.text : undefined,
   };
 }
 
@@ -519,6 +524,7 @@ async function runCampaignTick(campaign: Campaign) {
     lastAction: outcome.lastAction,
     touched,
     ...(outcome.fitScore !== undefined ? { fitScore: outcome.fitScore } : {}),
+    ...(outcome.researchBrief ? { researchBrief: outcome.researchBrief } : {}),
   });
 
   latest.pushEvent({

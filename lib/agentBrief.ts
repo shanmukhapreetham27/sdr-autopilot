@@ -59,6 +59,19 @@ export function buildBrief(
       bullet("Exclusion criteria", campaign.icp.exclusions) +
       bullet("Channels currently open", openChannels.join(", ") || "none") +
       bullet("Daily outreach limit", campaign.dailyLimit),
+    // The Research Agent's own output, handed to every downstream agent.
+    // Without this, the Personalisation Agent has nothing verified to work
+    // from and fills the gap by inventing funding rounds and customer names.
+    prospect.researchBrief
+      ? [
+          "VERIFIED RESEARCH BRIEF — ground every claim in this section.",
+          "Do not state any fact about the company that does not appear below.",
+          "Anything marked unknown or unconfirmed must not be asserted.",
+          "",
+          prospect.researchBrief,
+          "",
+        ].join("\n")
+      : "",
     "PROSPECT:",
     bullet("Name", prospect.name) +
       bullet("Title", prospect.title) +

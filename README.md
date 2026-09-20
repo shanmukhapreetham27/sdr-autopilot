@@ -22,7 +22,8 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Cross-campaign duplicate-prospect conflict detection | ✅ Working |
 | Campaign creation and duplication into an A/B variant | ✅ Working |
 | Live agent execution loop with funnel progression | ✅ Working |
-| DronaHQ agent integration (6 agents over webhooks) | ✅ Working — wired per agent via env vars |
+| DronaHQ agent integration — all 6 agents live | ✅ Working, verified against the published endpoints |
+| Research brief chained into downstream agents (grounding) | ✅ Working |
 | Voice SDR agent | ⛔ Out of scope for this build |
 | Apollo / Gmail / Twilio / LinkedIn sending | ⛔ Not yet wired |
 | Authentication, rep assignment, persistent database | ⛔ Out of scope for this build |
@@ -120,9 +121,36 @@ The agent's own output is in `response`. `normaliseAgentResult` handles three sh
 | JSON string | Re-parsed, then treated as structured |
 | Structured JSON | Reads `summary`, `message`, `score`, `verdict`, `advance`, `escalate`, `channel` |
 
-Verdict tokens drive the funnel: `QUALIFIED` / `CONTACT` / `PROCEED` advance the prospect,
-`REJECTED` / `HOLD` / `STOP` do not, and `ESCALATE` / `NEEDS_REVIEW` mark the action as
-needing a human. A response matching none of these is logged rather than crashing the run.
+Verdict tokens drive the funnel: `QUALIFIED` / `CONTACT` / `PROCEED` / `FOLLOW_UP` advance
+the prospect, `REJECTED` / `HOLD` / `STOP` do not, and `ESCALATE` / `NEEDS_REVIEW` mark the
+action as needing a human. A response matching none of these is logged rather than crashing
+the run.
+
+**What each live agent actually returns** (observed against the published endpoints):
+
+| Agent | Output |
+| --- | --- |
+| Qualify | `fit_score: 80` / `verdict: QUALIFIED` / criteria breakdown |
+| Research | Markdown brief with sources; no verdict, so the prospect advances |
+| Outreach | `channel: email, verdict: CONTACT` + reasoning |
+| Personalise | The message body only |
+| Converse | `intent: objection, verdict: ESCALATE` + reason |
+| Followup | `VERDICT: FOLLOW_UP` + timing, channel and new angle |
+
+### Grounding: chaining research into personalisation
+
+The Research Agent's full brief is stored on the prospect (`Prospect.researchBrief`) and
+injected into every downstream agent's brief under a "VERIFIED RESEARCH BRIEF" heading that
+forbids asserting anything not present in it.
+
+This matters. Asked to write to a CTO with no brief attached, the Personalisation Agent
+invented a funding round and a customer name. Given the Research Agent's brief for the same
+company, it instead opened on the company's actual flat-file content architecture — a fact
+the Research Agent had sourced and cited. Same agent, same prompt; the difference is the
+grounding context.
+
+Prospects carrying a brief are marked in the campaign's Prospects tab.
+
 
 
 ---

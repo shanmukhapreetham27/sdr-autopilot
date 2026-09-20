@@ -355,6 +355,16 @@ function ProspectsTab({ prospects }: { prospects: Prospect[] }) {
                 </div>
               </td>
               <td className="max-w-xs px-4 py-2.5">
+                {/* Shows the research chain is real: once the Research Agent
+                    has produced a brief, every downstream agent writes from it. */}
+                {p.researchBrief && (
+                  <span
+                    title={p.researchBrief.slice(0, 600)}
+                    className="mb-1 inline-block cursor-help rounded border border-cyan-500/30 bg-cyan-500/10 px-1 py-0.5 text-[9px] font-medium text-cyan-300"
+                  >
+                    ⧉ Research brief
+                  </span>
+                )}
                 <span className="line-clamp-2 text-xs text-slate-500">{p.lastAction}</span>
               </td>
             </tr>

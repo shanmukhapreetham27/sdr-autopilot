@@ -143,6 +143,14 @@ export interface Prospect {
   lastAction: string;
   lastActionAt: string;
   research: ResearchNote[];
+  /**
+   * Full brief produced by the Research Agent.
+   *
+   * Carried forward to every downstream agent so personalisation, strategy
+   * and follow-up write from verified context instead of inventing facts
+   * about the company.
+   */
+  researchBrief?: string;
 }
 
 export type EventStatus = "success" | "failed" | "pending_approval";
