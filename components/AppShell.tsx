@@ -270,7 +270,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-950/70">
+      <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-slate-800 bg-slate-950/70">
         <div className="border-b border-slate-800 px-4 py-4">
           <Link href="/campaigns" className="block">
             <div className="text-sm font-semibold tracking-tight text-slate-100">SDR Autopilot</div>
@@ -278,7 +278,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </Link>
         </div>
 
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 overflow-y-auto space-y-1 p-3">
           {NAV.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             return (
