@@ -52,6 +52,17 @@ export interface SdrState {
   liveAgents: AgentKey[];
   setLiveAgents: (agents: AgentKey[]) => void;
 
+  /**
+   * Whether this browser tab is allowed to step campaigns.
+   *
+   * Deliberately local and unpersisted, unlike the kill switch. Every step is
+   * a billable agent call, and a tab left open keeps spending whether or not
+   * anyone is watching. This is one operator saying "not right now"; the kill
+   * switch is "stop the platform", which is global, durable and logged.
+   */
+  loopEnabled: boolean;
+  setLoopEnabled: (on: boolean) => void;
+
   // --- campaign lifecycle ---
   hydrate: () => Promise<void>;
   createCampaign: (input: NewCampaignInput) => string;
@@ -134,8 +145,10 @@ export const useSdr = create<SdrState>()((set, get) => ({
   sync: "loading",
   lastError: null,
   liveAgents: [],
+  loopEnabled: true,
 
   setLiveAgents: (agents) => set({ liveAgents: agents }),
+  setLoopEnabled: (on) => set({ loopEnabled: on }),
 
   hydrate: async () => {
     try {

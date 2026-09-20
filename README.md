@@ -17,6 +17,7 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Campaign lifecycle: Draft → Live → Paused → Completed → Archived | ✅ Working |
 | Per-campaign pause/resume that does **not** affect other campaigns | ✅ Working |
 | Per-agent pause, per-channel pause, global kill switch | ✅ Working |
+| Local agent-loop pause, with auto-pause on hidden tab and idle | ✅ Working |
 | Campaign dashboard: funnel, outreach, agent activity, outcomes | ✅ Working |
 | Prompt / AI-harness versioning, rollback, audit trail | ✅ Working |
 | Cross-campaign duplicate-prospect conflict detection | ✅ Working |
@@ -231,6 +232,42 @@ Real people's names and email addresses are deliberately kept out of a system th
 outbound outreach. Nothing is ever actually delivered — there is no Gmail, Twilio or
 LinkedIn sending in this build — but synthetic contacts mean that stays true even by
 accident.
+
+---
+
+## Controlling agent execution
+
+There are two separate stop controls, and the difference matters.
+
+| | Global kill switch | Agent loop toggle |
+| --- | --- | --- |
+| Scope | Every visitor, platform-wide | This browser tab only |
+| Stored | In Postgres — survives a restart | Nowhere |
+| Activity log | Writes a `system` event | Writes nothing |
+| Means | "Halt all autonomous action" | "I am not watching right now" |
+
+The kill switch is an emergency stop, so it is deliberately loud and durable.
+Using it as a cost control would mean a demo starting halted and a judge
+reading `GLOBAL KILL SWITCH ENGAGED` in the activity log.
+
+The loop toggle exists because every step is a billable agent call and the
+loop runs in **each visitor's browser**. A tab left open keeps spending
+whether or not anyone is looking at it, and a shared URL means several loops
+at once.
+
+It stops on any of these, and the sidebar always says which:
+
+| Reason | Shown as | Resumes |
+| --- | --- | --- |
+| Operator paused it | `Paused by you` | On click |
+| Tab is not visible | `Paused · tab hidden` | On returning to the tab |
+| No interaction for 5 minutes | `Paused · idle` | On any interaction |
+| Kill switch engaged | `Halted` | On releasing the switch |
+| Snapshot still loading | `Loading…` | Automatically |
+| No campaign is Live | `Idle · no live campaigns` | On activating one |
+
+Default is running, so a judge opening the URL sees campaigns working
+immediately.
 
 ---
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useSdr } from "@/lib/store";
 import { runTick } from "@/lib/simulator";
 import {
@@ -46,6 +46,85 @@ function useIntegrationStatus(enabled: boolean) {
       cancelled = true;
     };
   }, [enabled, setLiveAgents]);
+}
+
+/** Stop stepping campaigns after this long without any interaction. */
+const IDLE_AFTER_MS = 5 * 60_000;
+
+/**
+ * Whether this tab is the one the operator is looking at.
+ *
+ * A backgrounded tab keeps its timers running, so without this a forgotten
+ * tab would keep making billable agent calls with nobody watching.
+ */
+function useTabVisible(): boolean {
+  // Assumed visible on mount, which is when the effect first runs.
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const onChange = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+  return visible;
+}
+
+/**
+ * Whether the operator has been inactive for a while.
+ *
+ * Activity is recorded in a ref and sampled on an interval rather than
+ * setting state on every mouse move, which would re-render the whole shell
+ * continuously.
+ */
+function useIdle(afterMs: number): boolean {
+  const [idle, setIdle] = useState(false);
+  // Seeded in the effect rather than here: reading the clock during render
+  // is impure and would differ between renders.
+  const lastActive = useRef(0);
+
+  useEffect(() => {
+    const mark = () => {
+      lastActive.current = Date.now();
+    };
+    mark();
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"] as const;
+    for (const e of events) window.addEventListener(e, mark, { passive: true });
+
+    const id = setInterval(() => {
+      setIdle(Date.now() - lastActive.current > afterMs);
+    }, 15_000);
+
+    return () => {
+      clearInterval(id);
+      for (const e of events) window.removeEventListener(e, mark);
+    };
+  }, [afterMs]);
+
+  return idle;
+}
+
+type LoopReason = "running" | "loading" | "halted" | "off" | "hidden" | "idle" | "no-live";
+
+/**
+ * Decide whether the agent loop may step right now, and why not when it may
+ * not. Every reason is surfaced in the sidebar: an operator should never have
+ * to guess why the dashboard has stopped moving.
+ */
+function loopReason(args: {
+  mounted: boolean;
+  synced: boolean;
+  killSwitch: boolean;
+  loopEnabled: boolean;
+  visible: boolean;
+  idle: boolean;
+  liveCount: number;
+}): LoopReason {
+  if (!args.mounted || !args.synced) return "loading";
+  if (args.killSwitch) return "halted";
+  if (!args.loopEnabled) return "off";
+  if (!args.visible) return "hidden";
+  if (args.idle) return "idle";
+  if (args.liveCount === 0) return "no-live";
+  return "running";
 }
 
 /**
@@ -108,6 +187,28 @@ const NAV = [
   { href: "/activity", label: "Activity", icon: "≡" },
 ];
 
+
+const LOOP_LABEL: Record<LoopReason, (live: number) => string> = {
+  running: (live) => `Executing · ${live} live`,
+  loading: () => "Loading…",
+  halted: () => "Halted",
+  off: () => "Paused by you",
+  hidden: () => "Paused · tab hidden",
+  idle: () => "Paused · idle",
+  "no-live": () => "Idle · no live campaigns",
+};
+
+/** Shown only where the operator might otherwise wonder why nothing moves. */
+const LOOP_HINT: Record<LoopReason, string> = {
+  running: "",
+  loading: "",
+  halted: "Released from the kill switch above.",
+  off: "No agent calls are being made from this tab.",
+  hidden: "Resumes automatically when you return to this tab.",
+  idle: "Resumes as soon as you interact with the page.",
+  "no-live": "",
+};
+
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const mounted = useHydrated();
@@ -123,11 +224,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const liveAgents = useSdr((s) => s.liveAgents);
   const sync = useSdr((s) => s.sync);
   const lastError = useSdr((s) => s.lastError);
+  const loopEnabled = useSdr((s) => s.loopEnabled);
+  const setLoopEnabled = useSdr((s) => s.setLoopEnabled);
 
-  // Only step campaigns once real state is loaded.
-  useAgentLoop(mounted && sync === "ready");
+  const tabVisible = useTabVisible();
+  const idle = useIdle(IDLE_AFTER_MS);
 
   const liveCount = campaigns.filter((c) => c.status === "live").length;
+  const reason = loopReason({
+    mounted,
+    synced: sync === "ready",
+    killSwitch,
+    loopEnabled,
+    visible: tabVisible,
+    idle,
+    liveCount,
+  });
+
+  // Every step is a billable agent call, so the loop runs only when all of
+  // these hold: state is loaded, the platform is not halted, the operator has
+  // not paused it, this tab is visible, and they are still around.
+  useAgentLoop(reason === "running");
+
   const wiredCount = liveAgents.length;
 
   return (
@@ -162,26 +280,40 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         <div className="space-y-3 border-t border-slate-800 p-3">
           <div className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-              Agent loop
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                Agent loop
+              </div>
+              {/* Local pause. Unlike the kill switch this affects only this
+                  tab, writes nothing to the database and logs nothing. */}
+              <button
+                type="button"
+                onClick={() => setLoopEnabled(!loopEnabled)}
+                title={
+                  loopEnabled
+                    ? "Pause agent execution in this tab. Nothing is saved or logged."
+                    : "Resume agent execution in this tab."
+                }
+                className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300 transition-colors hover:bg-slate-800"
+              >
+                {loopEnabled ? "❚❚" : "▶"}
+              </button>
             </div>
+
             <div className="mt-1 flex items-center gap-1.5 text-xs">
-              {mounted && sync === "ready" && !killSwitch && liveCount > 0 ? (
-                <>
-                  <span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  <span className="text-emerald-300">
-                    Executing · {liveCount} live
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="h-1.5 w-1.5 rounded-full bg-slate-600" />
-                  <span className="text-slate-500">
-                    {killSwitch ? "Halted" : sync === "loading" ? "Loading…" : "Idle"}
-                  </span>
-                </>
-              )}
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  reason === "running" ? "live-dot bg-emerald-400" : "bg-slate-600"
+                }`}
+              />
+              <span className={reason === "running" ? "text-emerald-300" : "text-slate-500"}>
+                {LOOP_LABEL[reason](liveCount)}
+              </span>
             </div>
+
+            {LOOP_HINT[reason] && (
+              <p className="mt-1 text-[10px] leading-snug text-slate-600">{LOOP_HINT[reason]}</p>
+            )}
           </div>
 
           {/* Honest integration status: how many agents are actually backed
