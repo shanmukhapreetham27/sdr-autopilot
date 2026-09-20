@@ -9,6 +9,7 @@
  */
 import { Pool, type PoolClient } from "pg";
 import { SEED_CAMPAIGNS, SEED_PROSPECTS, buildSeedActivity } from "./seed";
+import { readKnowledge } from "./knowledge";
 import type { Command, StateSnapshot } from "./commands";
 import type {
   ActivityEvent,
@@ -123,6 +124,7 @@ function toEvent(r: Row): ActivityEvent {
     source: r.source as ActivityEvent["source"],
     resolvedAt: r.resolved_at ? (r.resolved_at as Date).toISOString() : undefined,
     resolvedBy: (r.resolved_by as string) ?? undefined,
+    retrieved: (r.retrieved as ActivityEvent["retrieved"]) ?? undefined,
   };
 }
 
@@ -143,6 +145,8 @@ export async function readState(): Promise<StateSnapshot> {
       db.query("select * from campaign_agents"),
       db.query("select * from prospects order by campaign_id, id"),
       db.query("select * from activity_events order by ts desc limit $1", [EVENT_LIMIT]),
+      // Read with everything else rather than on demand: the corpus is tens
+      // of rows, and the control plane renders it on the same snapshot.
       db.query("select kill_switch from platform_control where id = true"),
     ]);
 
@@ -201,6 +205,9 @@ export async function readState(): Promise<StateSnapshot> {
     prospects: prospectRows.rows.map(toProspect),
     activity: eventRows.rows.map(toEvent),
     killSwitch: (control.rows[0]?.kill_switch as boolean) ?? false,
+    // Tolerated separately: a knowledge read that fails must not take the
+    // whole snapshot down, because every existing screen works without it.
+    knowledge: await readKnowledge().catch(() => []),
   };
 }
 
@@ -287,13 +294,15 @@ async function insertEvent(db: PoolClient, e: ActivityEvent) {
   await db.query(
     `insert into activity_events
        (id, campaign_id, ts, agent, channel, prospect_id, prospect_name,
-        summary, message, status, version_id, tokens, latency_ms, source)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        summary, message, status, version_id, tokens, latency_ms, source,
+        retrieved)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      on conflict (id) do nothing`,
     [
       e.id, e.campaignId, e.ts, e.agent, e.channel ?? null, e.prospectId ?? null,
       e.prospectName ?? null, e.summary, e.message ?? null, e.status,
       e.versionId, e.tokens, e.latencyMs ?? null, e.source,
+      e.retrieved?.length ? JSON.stringify(e.retrieved) : null,
     ],
   );
 }
@@ -441,6 +450,26 @@ export async function applyCommand(cmd: Command): Promise<void> {
         }
         break;
       }
+
+      case "addKnowledge": {
+        const k = cmd.chunk;
+        await db.query(
+          `insert into knowledge_chunks
+             (id, campaign_id, kind, title, content, source, created_at)
+           values ($1,$2,$3,$4,$5,$6,$7)
+           on conflict (id) do update
+             set title = excluded.title,
+                 content = excluded.content,
+                 kind = excluded.kind,
+                 source = excluded.source`,
+          [k.id, k.campaignId, k.kind, k.title, k.content, k.source, k.createdAt],
+        );
+        break;
+      }
+
+      case "deleteKnowledge":
+        await db.query("delete from knowledge_chunks where id = $1", [cmd.chunkId]);
+        break;
 
       case "pushEvent":
         await insertEvent(db, cmd.event);

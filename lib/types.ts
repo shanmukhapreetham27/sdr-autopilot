@@ -214,6 +214,45 @@ export interface ProspectDossier {
   overall_confidence?: string;
 }
 
+/**
+ * One retrievable piece of campaign knowledge.
+ *
+ * The campaign already owned its prompts, policy and targeting; this is the
+ * knowledge those prompts kept referring to. Retrieval runs server-side only
+ * (lib/knowledge.ts) — this type exists here so the control plane can list
+ * and edit the corpus without importing anything that touches the database.
+ */
+export type ChunkKind =
+  | "product"
+  | "case_study"
+  | "playbook"
+  | "objection"
+  | "example_email"
+  | "voice_script"
+  | "icp_definition";
+
+export const CHUNK_KINDS: ChunkKind[] = [
+  "product",
+  "case_study",
+  "playbook",
+  "objection",
+  "example_email",
+  "voice_script",
+  "icp_definition",
+];
+
+export interface KnowledgeChunk {
+  id: string;
+  /** null means platform-wide: shared by every campaign. */
+  campaignId: string | null;
+  kind: ChunkKind;
+  title: string;
+  content: string;
+  /** Provenance, shown in the UI beside the chunk. */
+  source: string;
+  createdAt: string;
+}
+
 export type EventStatus = "success" | "failed" | "pending_approval";
 
 /**
@@ -252,6 +291,20 @@ export interface ActivityEvent {
    */
   resolvedAt?: string;
   resolvedBy?: string;
+  /**
+   * Knowledge retrieved before this action, if any.
+   *
+   * Recorded for the same reason as `source` and `versionId`: so a reader can
+   * see what grounded an answer rather than taking the claim on trust.
+   */
+  retrieved?: RetrievedRef[];
+}
+
+/** One knowledge chunk that grounded an agent action. */
+export interface RetrievedRef {
+  title: string;
+  kind: string;
+  source: string;
 }
 
 /** Derived, never stored: computed from the campaign's prospects. */

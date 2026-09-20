@@ -38,21 +38,38 @@ export function buildAgentRequest(
   return buildRequest(task, campaign, prospect);
 }
 
+/** What the server retrieved for this call, for the audit trail. */
+export interface RetrievedRef {
+  title: string;
+  kind: string;
+  source: string;
+}
+
 export type InvokeOutcome =
-  | { ok: true; result: AgentOutcome; ms: number }
-  | { ok: false; error: string; ms: number };
+  | { ok: true; result: AgentOutcome; ms: number; retrieved?: RetrievedRef[] }
+  | { ok: false; error: string; ms: number; retrieved?: RetrievedRef[] };
+
+/**
+ * The app's own routing information for a call: which campaign, and what to
+ * retrieve knowledge against. Stripped by the proxy, never sent to DronaHQ.
+ */
+export interface AgentContext {
+  campaignId: string;
+  queryParts: Array<string | undefined | null>;
+}
 
 /** Call one agent through the server proxy. Never throws. */
 export async function invokeAgent(
   agent: LiveAgentKey,
   payload: Record<string, unknown>,
+  context?: AgentContext,
 ): Promise<InvokeOutcome> {
   const started = Date.now();
   try {
     const res = await fetch(`/api/agents/${agent}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ payload, context }),
     });
     const json = (await res.json()) as InvokeOutcome;
     if (typeof json?.ok !== "boolean") {

@@ -8,9 +8,10 @@ import { AGENTS, STAGES } from "@/lib/types";
 import type { ActivityEvent, Campaign, Channel, Prospect, Stage } from "@/lib/types";
 import ActivityFeed from "@/components/ActivityFeed";
 import HarnessTab from "@/components/HarnessTab";
+import KnowledgeTab from "@/components/KnowledgeTab";
 import { Button, Card, ChannelTag, EmptyState, Stat, StatusPill } from "@/components/ui";
 
-const TABS = ["Overview", "Prospects", "Activity", "AI Harness", "Settings"] as const;
+const TABS = ["Overview", "Prospects", "Activity", "AI Harness", "Knowledge", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function CampaignDetailPage() {
@@ -105,6 +106,7 @@ export default function CampaignDetailPage() {
         </Card>
       )}
       {tab === "AI Harness" && <HarnessTab campaign={campaign} />}
+      {tab === "Knowledge" && <KnowledgeTab campaign={campaign} />}
       {tab === "Settings" && <SettingsTab campaign={campaign} />}
     </div>
   );

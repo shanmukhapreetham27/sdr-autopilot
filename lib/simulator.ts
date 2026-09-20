@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
+import type { ActivityEvent, AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
 import { COMPANY_FACTS, factsFor } from "./companies";
 import { describeVerdict, scoreProspect } from "./icpScorer";
@@ -600,6 +600,7 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
         dossier: undefined as Prospect["dossier"],
         countsAsTouch: false,
         angle: undefined as string | undefined,
+        retrieved: [] as ActivityEvent["retrieved"],
       };
     }
 
@@ -617,11 +618,26 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       dossier: undefined as Prospect["dossier"],
       countsAsTouch: step.agent === "personalisation" && step.status === "success",
       angle: undefined as string | undefined,
+      retrieved: [] as ActivityEvent["retrieved"],
     };
   }
 
   const payload = buildAgentRequest(step.agent as LiveAgentKey, campaign, prospect);
-  const outcome = await invokeAgent(step.agent as LiveAgentKey, payload);
+
+  // What this agent should retrieve knowledge against: the thing it is about
+  // to reason over, not a generic description of the prospect. Conversation
+  // searches the reply itself, which is why it had to be a real reply.
+  const queryParts =
+    step.agent === "conversation"
+      ? [prospect.lastReply, prospect.company, prospect.title]
+      : step.agent === "followup"
+        ? [...prospect.anglesUsed, step.channel, prospect.company, prospect.title]
+        : [prospect.company, prospect.industry, prospect.title, prospect.researchBrief];
+
+  const outcome = await invokeAgent(step.agent as LiveAgentKey, payload, {
+    campaignId: campaign.id,
+    queryParts,
+  });
 
   if (!outcome.ok) {
     // The agent is unreachable or returned nothing after its retries. Holding
@@ -645,6 +661,7 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       dossier: undefined,
       countsAsTouch: step.agent === "personalisation" && step.status === "success",
       angle: undefined,
+      retrieved: [] as ActivityEvent["retrieved"],
     };
   }
 
@@ -677,6 +694,8 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
     // A drafted message is an outbound touch; the sequence agents count these.
     countsAsTouch: step.agent === "personalisation" && r.decision === "advance",
     angle: r.angle,
+    // What the proxy retrieved for this call, straight into the audit trail.
+    retrieved: outcome.retrieved ?? [],
   };
 }
 
@@ -863,6 +882,7 @@ async function runCampaignTick(campaign: Campaign) {
     prospectName: prospect.name,
     summary: outcome.summary + (deliveryNote ?? ""),
     status: outcome.status,
+    ...(outcome.retrieved?.length ? { retrieved: outcome.retrieved } : {}),
     versionId: campaign.activeVersionId,
     tokens: outcome.tokens,
     source: outcome.source,

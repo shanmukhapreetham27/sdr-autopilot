@@ -1,5 +1,6 @@
 import type {
   ActivityEvent,
+  KnowledgeChunk,
   AgentKey,
   Campaign,
   CampaignStatus,
@@ -49,7 +50,13 @@ export type Command =
       /** Where the reviewer sent it. Omitted when they only acknowledged. */
       prospectState?: ProspectState;
       lastAction?: string;
-    };
+    }
+  /**
+   * Add one chunk to a campaign's knowledge base, or to the platform-wide
+   * one when `campaignId` is null.
+   */
+  | { op: "addKnowledge"; chunk: KnowledgeChunk }
+  | { op: "deleteKnowledge"; chunkId: string };
 
 /** Full snapshot of platform state, as returned by GET /api/state. */
 export interface StateSnapshot {
@@ -57,4 +64,9 @@ export interface StateSnapshot {
   prospects: Prospect[];
   activity: ActivityEvent[];
   killSwitch: boolean;
+  /**
+   * The corpus agents retrieve from. Carried in the snapshot so the control
+   * plane can show and edit it; retrieval itself never runs in the browser.
+   */
+  knowledge: KnowledgeChunk[];
 }

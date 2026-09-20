@@ -115,6 +115,29 @@ export default function ActivityFeed({
                 />
               )}
 
+              {/* What grounded this action. Shown for the same reason as the
+                  harness version and the DronaHQ badge: the app should never
+                  claim retrieval a reader cannot check. */}
+              {!!e.retrieved?.length && (
+                <details className="group mt-1.5">
+                  <summary className="cursor-pointer list-none text-[10px] text-cyan-400/80 hover:text-cyan-300">
+                    <span className="group-open:hidden">
+                      ▸ Grounded in {e.retrieved.length} retrieved{" "}
+                      {e.retrieved.length === 1 ? "source" : "sources"}
+                    </span>
+                    <span className="hidden group-open:inline">▾ Hide sources</span>
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 border-l border-cyan-500/30 pl-2.5">
+                    {e.retrieved.map((r, i) => (
+                      <li key={i} className="text-[10px] leading-snug text-slate-500">
+                        <span className="text-slate-300">{r.title}</span>
+                        <span className="text-slate-600"> · {r.kind} · {r.source}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-600">
                 <span>{timeAgo(e.ts, now)}</span>
                 {/* Audit trail: which harness version produced this action. */}

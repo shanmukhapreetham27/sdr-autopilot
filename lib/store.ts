@@ -10,6 +10,8 @@ import type {
   CampaignStatus,
   Channel,
   Funnel,
+  KnowledgeChunk,
+  ChunkKind,
   Prospect,
   ProspectState,
   PromptVersion,
@@ -90,6 +92,17 @@ export interface SdrState {
 
   // --- human in the loop ---
   resolveEscalation: (eventId: string, decision: EscalationDecision) => void;
+
+  // --- campaign knowledge (RAG corpus) ---
+  knowledge: KnowledgeChunk[];
+  addKnowledge: (input: {
+    campaignId: string | null;
+    kind: ChunkKind;
+    title: string;
+    content: string;
+    source: string;
+  }) => void;
+  deleteKnowledge: (chunkId: string) => void;
 
 }
 
@@ -191,6 +204,7 @@ export const useSdr = create<SdrState>()((set, get) => ({
   prospects: [],
   activity: [],
   killSwitch: false,
+  knowledge: [],
   sync: "loading",
   lastError: null,
   liveAgents: [],
@@ -447,6 +461,26 @@ export const useSdr = create<SdrState>()((set, get) => ({
   addProspect: (prospect) => {
     set((s) => ({ prospects: [...s.prospects, prospect] }));
     dispatch({ op: "addProspect", prospect });
+  },
+
+  addKnowledge: (input) => {
+    const chunk: KnowledgeChunk = {
+      id: uid("kn"),
+      campaignId: input.campaignId,
+      kind: input.kind,
+      title: input.title.trim(),
+      content: input.content.trim(),
+      // Never blank: a chunk with no provenance is one nobody can audit.
+      source: input.source.trim() || "added in app",
+      createdAt: now(),
+    };
+    set((s) => ({ knowledge: [...s.knowledge, chunk] }));
+    dispatch({ op: "addKnowledge", chunk });
+  },
+
+  deleteKnowledge: (chunkId) => {
+    set((s) => ({ knowledge: s.knowledge.filter((k) => k.id !== chunkId) }));
+    dispatch({ op: "deleteKnowledge", chunkId });
   },
 
   resolveEscalation: (eventId, decision) => {
