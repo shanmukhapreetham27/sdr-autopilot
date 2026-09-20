@@ -451,21 +451,26 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
   const outcome = await invokeAgent(step.agent as LiveAgentKey, payload);
 
   if (!outcome.ok) {
-    // A failed DronaHQ call is a real operational failure: log it honestly and
-    // leave the prospect where it is so the next tick retries.
+    // The agent is unreachable or returned nothing after its retries. Holding
+    // the prospect here would jam the funnel behind one unreliable agent, so
+    // fall back to the local step and let the campaign continue.
+    //
+    // The event is attributed to the fallback, not to DronaHQ, and names the
+    // failure in the summary: the log must never imply an agent produced a
+    // result it did not.
     return {
-      source: "dronahq" as const,
-      summary: `DronaHQ ${step.agent} call failed for ${prospect.name}: ${outcome.error}`,
-      lastAction: "DronaHQ call failed, will retry",
-      status: "failed" as const,
-      nextState: prospect.state,
-      tokens: 0,
-      fitScore: undefined,
+      source: "simulated" as const,
+      summary: `DronaHQ ${step.agent} unavailable (${outcome.error}) — local fallback: ${step.summary}`,
+      lastAction: step.lastAction,
+      status: step.status,
+      nextState: step.nextState,
+      tokens: step.tokens,
+      fitScore: step.fitScore,
       message: undefined,
       latencyMs: outcome.ms,
       researchBrief: undefined,
       dossier: undefined,
-      countsAsTouch: false,
+      countsAsTouch: step.agent === "personalisation" && step.status === "success",
       angle: undefined,
     };
   }

@@ -43,15 +43,30 @@ switch before any action can be produced.
 
 How that step is then *executed* depends on configuration:
 
-- If the owning agent has a **DronaHQ webhook** configured, the real published agent is
-  called and its structured JSON response drives the outcome — the summary, the generated
-  message, the ICP score, and whether the prospect advances, is rejected, or is escalated.
-- Otherwise the step falls back to a locally generated narration, so the control plane is
-  fully demonstrable without every agent wired.
+- If the owning agent has a **DronaHQ webhook** configured, the real published
+  agent is called and its response drives the outcome — the summary, the
+  generated message, the ICP score, and whether the prospect advances, is
+  rejected, or is escalated.
+- If that agent is not configured, or is configured but fails after its
+  retries, the step falls back to a locally generated one so the campaign
+  keeps moving.
 
-Every activity event records which of the two actually happened (`source: "dronahq"` or
-`"simulated"`), and the UI labels it. **The app never claims a DronaHQ agent ran when it
-did not.** The sidebar shows `n / 6 wired` at all times.
+Every activity event records which of the two actually happened
+(`source: "dronahq"` or `"simulated"`), and the UI labels it. A fallback after
+a live failure is attributed to the fallback, not to DronaHQ, and names the
+failure in the summary:
+
+```
+DronaHQ icp_fitment unavailable (completed the run but returned no output)
+  — local fallback: Scored Dana Whitfield against campaign ICP…
+```
+
+**The app never claims a DronaHQ agent produced a result it did not.** The
+sidebar shows `n / 6 wired` at all times.
+
+Falling back rather than holding is deliberate. One unreliable agent sits at
+one funnel stage, and holding there would jam every prospect behind it — the
+control plane would look broken because of a single upstream fault.
 
 ### How the DronaHQ integration works
 
@@ -482,6 +497,12 @@ The India BFSI campaign ships Paused on purpose, so the difference is visible on
 ## Known limitations
 
 - Agents without a configured DronaHQ webhook fall back to locally generated steps.
+- The ICP Fitment agent is currently unreliable upstream: it returns a
+  completed run with no output on most calls, so that stage usually runs on
+  the fallback. The Research agent returns prose rather than its declared JSON
+  schema, so no structured dossier is stored and downstream agents receive
+  `research: null`. Both are Webhook Trigger configuration issues on the
+  DronaHQ side, not in this codebase.
 - Lead discovery draws from a seeded pool of real companies; there is no live
   lead-sourcing integration.
 - Prospect contacts are synthetic personas at real companies.
