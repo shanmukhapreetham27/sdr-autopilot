@@ -8,7 +8,7 @@ campaigns.
 Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaHQ).
 
 **Live:** https://sdr-autopilot.vercel.app
-**Report:** [docs/REPORT.md](docs/REPORT.md)
+**Report:** [docs/REPORT.md](docs/REPORT.md)  ·  **Deck:** [docs/SDR-Autopilot-Deck.pptx](docs/SDR-Autopilot-Deck.pptx)
 
 ---
 
