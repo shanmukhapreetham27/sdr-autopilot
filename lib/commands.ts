@@ -6,6 +6,7 @@ import type {
   Channel,
   PromptVersion,
   Prospect,
+  ProspectState,
 } from "./types";
 
 /**
@@ -30,7 +31,25 @@ export type Command =
   | { op: "activateVersion"; campaignId: string; versionId: string }
   | { op: "addProspect"; prospect: Prospect }
   | { op: "updateProspect"; prospectId: string; patch: Partial<Prospect> }
-  | { op: "pushEvent"; event: ActivityEvent };
+  | { op: "pushEvent"; event: ActivityEvent }
+  /**
+   * A human clears one escalation.
+   *
+   * One command rather than a resolve-then-update pair, because the two halves
+   * must not be separable: an event marked resolved while its prospect stays
+   * parked is a prospect nothing will ever pick up again.
+   */
+  | {
+      op: "resolveEscalation";
+      eventId: string;
+      resolvedBy: string;
+      resolvedAt: string;
+      /** The parked prospect to release, when the escalation held one. */
+      prospectId?: string;
+      /** Where the reviewer sent it. Omitted when they only acknowledged. */
+      prospectState?: ProspectState;
+      lastAction?: string;
+    };
 
 /** Full snapshot of platform state, as returned by GET /api/state. */
 export interface StateSnapshot {

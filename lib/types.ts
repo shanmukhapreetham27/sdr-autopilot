@@ -181,6 +181,24 @@ export interface Prospect {
   researchBrief?: string;
   /** Structured dossier returned by the Research Agent, when it parsed. */
   dossier?: ProspectDossier;
+  /**
+   * What the prospect last said back, verbatim.
+   *
+   * Distinct from `lastAction`, which records what our own agents did. The
+   * Conversation Agent classifies intent from this and must never be shown
+   * the other: "opened but did not reply" is not a reply.
+   */
+  lastReply?: string;
+  lastReplyAt?: string;
+  lastReplyChannel?: Channel;
+  /**
+   * Parked pending a human verdict.
+   *
+   * Set when an agent escalates without moving the prospect on. The loop skips
+   * these entirely: the escalating agent is deterministic, so re-running it
+   * would return the same verdict and escalate again on every tick.
+   */
+  needsReview?: boolean;
 }
 
 /** Subset of the Research Agent's Prospect Dossier schema that the app uses. */
@@ -225,6 +243,15 @@ export interface ActivityEvent {
   message?: string;
   /** Round-trip time of the DronaHQ call, in ms. */
   latencyMs?: number;
+  /**
+   * When a human resolved this escalation, and who.
+   *
+   * `status` stays 'pending_approval' after resolution. The log is an audit
+   * trail, and overwriting the status would erase the fact that the agent
+   * escalated at all.
+   */
+  resolvedAt?: string;
+  resolvedBy?: string;
 }
 
 /** Derived, never stored: computed from the campaign's prospects. */

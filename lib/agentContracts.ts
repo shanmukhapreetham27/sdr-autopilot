@@ -219,11 +219,25 @@ export function buildRequest(
           version?.agentPrompts.conversation ?? "",
           "",
           "INBOUND REPLY:",
-          prospect.lastAction,
+          // Only ever the prospect's own words. `lastAction` is what our own
+          // agents did, and feeding that here had the agent classifying
+          // intent from the Follow-up Agent's cadence directives.
+          prospect.lastReply ??
+            "(none on record — the prospect has not replied. Do not infer intent; hold.)",
           "",
           "THREAD:",
           `${prospect.touchCount} prior touch(es) on ${prospect.touched.join(", ") || "no channel"}.`,
-        ].join("\n"),
+          prospect.lastReplyChannel
+            ? `Reply arrived on ${prospect.lastReplyChannel}${prospect.lastReplyAt ? ` at ${prospect.lastReplyAt}` : ""}.`
+            : "",
+          "",
+          // Kept, but labelled honestly, so the agent can see sequence state
+          // without mistaking it for something the prospect said.
+          "LAST ACTION WE TOOK:",
+          prospect.lastAction,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         stop_policy: policy.stopPolicy,
         escalation_policy: policy.escalationPolicy,
       };

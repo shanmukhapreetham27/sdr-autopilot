@@ -2,7 +2,7 @@
 
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
-import { factsFor } from "./companies";
+import { COMPANY_FACTS, factsFor } from "./companies";
 import { describeVerdict, scoreProspect } from "./icpScorer";
 import {
   buildAgentRequest,
@@ -186,6 +186,11 @@ export function decideStep(campaign: Campaign, prospects: Prospect[]): AgentStep
   const eligible: Array<{ prospect: Prospect; stage: Stage; agent: AgentKey; channel?: Channel }> = [];
 
   for (const prospect of mine) {
+    // Parked on a human verdict. The agent that escalated is deterministic,
+    // so selecting this prospect again would produce the same verdict and the
+    // same escalation, once per tick, forever.
+    if (prospect.needsReview) continue;
+
     const stage = prospect.state as Stage;
     const agent = STAGE_OWNER[stage];
     if (!NEXT_STATE[stage]) continue;
@@ -230,7 +235,13 @@ export function decideStep(campaign: Campaign, prospects: Prospect[]): AgentStep
     }
 
     // A small share of replies are things an agent must not answer alone.
-    if (stage === "contacted" && Math.random() < 0.15) {
+    //
+    // Reading the reply is the Conversation Agent's work even though the
+    // prospect sits at a stage Follow-up owns, so it needs Conversation's own
+    // permission: the gate above only cleared the stage owner. Without this
+    // check a paused Conversation Agent still runs, still bills, and still
+    // calls its DronaHQ webhook.
+    if (stage === "contacted" && agentAllowed(campaign, "conversation") && Math.random() < 0.15) {
       return {
         campaignId: campaign.id,
         prospect,
@@ -262,18 +273,33 @@ export function decideStep(campaign: Campaign, prospects: Prospect[]): AgentStep
     // Most downstream attempts do not move the prospect: the agent works the
     // account and waits. This keeps the funnel shaped like a funnel.
     if (Math.random() > ADVANCE_PROB[stage]) {
+      // Queuing the next touch is Follow-up's work wherever it happens, and
+      // this branch fires at 'engaged' and 'meeting' too — stages the
+      // Conversation Agent owns. So it needs Follow-up's own permission,
+      // which the gate above did not check.
+      //
+      // Paused, the step still belongs to the stage owner: the account was
+      // worked and nothing came back. What it must not do is run under
+      // Follow-up's name or claim a follow-up that was never queued.
+      const chasing = agentAllowed(campaign, "followup");
+
       // Stages that don't touch a prospect (e.g. meeting -> opportunity) have
       // no channel, so the copy must not name one.
       const via = channel ? ` on ${channel}` : "";
-      const waiting = pick([
-        `No reply from ${prospect.name} yet — follow-up queued${via}, angle changed`,
-        `${prospect.name} opened but did not reply. Holding for 2 days before touch ${prospect.touched.length + 1}`,
-        `Re-checked ${prospect.company} for new signals before following up with ${prospect.name}`,
-      ]);
+      const waiting = chasing
+        ? pick([
+            `No reply from ${prospect.name} yet — follow-up queued${via}, angle changed`,
+            `${prospect.name} opened but did not reply. Holding for 2 days before touch ${prospect.touched.length + 1}`,
+            `Re-checked ${prospect.company} for new signals before following up with ${prospect.name}`,
+          ])
+        : pick([
+            `No reply from ${prospect.name} yet — nothing queued, the Follow-up Agent is paused`,
+            `${prospect.name} opened but did not reply. No next touch while the Follow-up Agent is paused`,
+          ]);
       return {
         campaignId: campaign.id,
         prospect,
-        agent: "followup",
+        agent: chasing ? "followup" : agent,
         channel,
         nextState: prospect.state,
         summary: waiting,
@@ -399,29 +425,119 @@ const DISCOVERY_POOLS: Record<string, DiscoveryPool> = {
   },
 };
 
-const DEFAULT_POOL: DiscoveryPool = {
-  titles: ["VP Engineering", "Director of Platform", "Head of Technology"],
-  companies: [
-    { name: "Stripe", domain: "stripe.com", location: "San Francisco, CA" },
-    { name: "Datadog", domain: "datadoghq.com", location: "New York, NY" },
-    { name: "Snowflake", domain: "snowflake.com", location: "Bozeman, MT" },
+/** Last resort, when a campaign's ICP matches nothing in the catalogue. */
+const DEFAULT_TITLES = ["VP Engineering", "Director of Platform", "Head of Technology"];
+
+/**
+ * A pool that is at least plausible for the campaign's own ICP.
+ *
+ * The seed campaigns have hand-written pools above. Everything else — every
+ * campaign created in the app — used to fall back to three large US companies
+ * regardless of its targeting, so a campaign aimed at 80-600 employee DACH
+ * software firms discovered Stripe and Datadog. Nothing it found could
+ * qualify, and the whole funnel emptied into the escalation queue.
+ *
+ * Geography is the filter because it is the dimension a wrong pool gets
+ * absurdly wrong. Headcount deliberately is not: the catalogue carries
+ * companies above and below a typical band in each region, so the ICP agent
+ * still has real decisions to make rather than a pool engineered to pass.
+ */
+function derivePool(campaign: Campaign): { pool: DiscoveryPool; matchedGeography: boolean } {
+  const { icp } = campaign;
+
+  const geoTokens = icp.geography
+    .split(/[,/]/)
+    .map((g) => g.trim().toLowerCase())
+    .filter(Boolean);
+
+  const all = Object.entries(COMPANY_FACTS);
+  const inGeography = geoTokens.length
+    ? all.filter(([, f]) =>
+        geoTokens.some((g) => `${f.country} ${f.location}`.toLowerCase().includes(g)),
+      )
+    : all;
+
+  // Two companies is not a pool — every prospect would come from the same
+  // one or two names and the duplicate check would starve discovery.
+  const matchedGeography = inGeography.length >= 3;
+  const chosen = matchedGeography ? inGeography : all;
+
+  return {
+    matchedGeography,
+    pool: {
+      titles: icp.targetRoles.length ? icp.targetRoles : DEFAULT_TITLES,
+      companies: chosen.map(([name, f]) => ({
+        name,
+        domain: f.domain,
+        location: f.location,
+      })),
+    },
+  };
+}
+
+/**
+ * What a prospect writes back.
+ *
+ * The Conversation Agent classifies intent from an inbound reply, so one has
+ * to exist. Before this the app had nowhere to record what a prospect said and
+ * handed the agent `lastAction` instead — our own agents' output, labelled as
+ * the prospect's words.
+ *
+ * Written to be genuinely ambiguous in places: an agent that only ever sees
+ * "yes please, book it" is never actually tested on the judgement it exists to
+ * make. Only the `booked` set is an unambiguous yes.
+ */
+const REPLIES = {
+  // contacted -> engaged: they responded to outreach at all.
+  interested: [
+    "Thanks for reaching out — this is actually on our roadmap for next quarter. What does onboarding look like?",
+    "Interesting timing. We've been hitting exactly this as the team has doubled. Happy to hear more.",
+    "I'm not the right person for this, but I can introduce you to our platform lead. What's the short version?",
+    "We evaluated something similar last year and passed on it. What's changed since then?",
+    "Can you send over a bit more detail? Hard to tell from the email whether this fits how we're set up.",
   ],
-};
+  // The subset an agent must hand to a human rather than answer itself.
+  pricing: [
+    "This looks relevant. What does pricing look like for a team our size?",
+    "Before we go further — can you send pricing and standard contract terms?",
+    "What would an annual commitment cost, and is there a security review pack?",
+  ],
+  // engaged -> meeting: an explicit, unambiguous yes.
+  booked: [
+    "Tuesday 14:00 CET works. Send an invite and I'll bring our platform lead.",
+    "Happy to do 30 minutes next week — Wednesday morning is best for me.",
+    "Let's do it. Send a calendar link and I'll get it in the diary.",
+  ],
+} as const;
+
+function replyFor(kind: keyof typeof REPLIES): string {
+  return pick([...REPLIES[kind]]);
+}
 
 /**
  * Honest provenance. There is no Apollo, Crunchbase or LinkedIn integration in
- * this build, so the activity log must not imply one.
+ * this build, so the activity log must not imply one — and when the pool could
+ * not be matched to the campaign's geography, it says that too rather than
+ * letting an operator wonder why nothing qualifies.
  */
 const DISCOVERY_SOURCE = "seeded demo pool — no lead-source integration connected";
+const DISCOVERY_SOURCE_UNMATCHED =
+  "seeded demo pool — no companies in this ICP's geography, so fit will be low";
 
 function discoverProspect(campaign: Campaign): { prospect: Prospect; source: string } {
-  const pool = DISCOVERY_POOLS[campaign.id] ?? DEFAULT_POOL;
+  // A hand-written pool wins: the seed campaigns are curated to tell a
+  // specific story, which a generic catalogue lookup would flatten.
+  const curated = DISCOVERY_POOLS[campaign.id];
+  const derived = curated ? null : derivePool(campaign);
+  const pool = curated ?? derived!.pool;
+
   const name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
   const company = pick(pool.companies);
   const handle = name.toLowerCase().replace(/[^a-z]+/g, ".");
 
   return {
-    source: DISCOVERY_SOURCE,
+    source:
+      derived && !derived.matchedGeography ? DISCOVERY_SOURCE_UNMATCHED : DISCOVERY_SOURCE,
     prospect: {
       id: `p_${Math.random().toString(36).slice(2, 9)}`,
       campaignId: campaign.id,
@@ -639,7 +755,10 @@ async function runCampaignTick(campaign: Campaign) {
   const store = useSdr.getState();
 
   // --- lead discovery ---
-  if (campaign.status === "live") {
+  // Discovery is the Research Agent's work, so it answers to that agent's
+  // pause switch. Without this check a paused Research Agent keeps filling
+  // the funnel, and the activity log keeps attributing it to that agent.
+  if (campaign.status === "live" && agentAllowed(campaign, "research")) {
     const count = store.prospects.filter((p) => p.campaignId === campaign.id).length;
     if (count < MAX_PROSPECTS_PER_CAMPAIGN && Math.random() < 0.4) {
       const { prospect, source } = discoverProspect(campaign);
@@ -691,10 +810,37 @@ async function runCampaignTick(campaign: Campaign) {
   const current = latest.campaigns.find((c) => c.id === campaign.id);
   if (!current || current.status !== "live" || latest.killSwitch) return;
 
+  // An escalation that leaves the prospect where it was has parked it: no
+  // agent can move it on, so only a human verdict can. An escalation that did
+  // advance the prospect (a pricing question hands off mid-conversation) is
+  // just a note on a prospect that is still flowing, so it is not parked.
+  const parked = outcome.status === "pending_approval" && outcome.nextState === prospect.state;
+
+  // Two transitions mean the prospect actually said something: replying to
+  // outreach at all (contacted -> engaged), and agreeing to a time
+  // (engaged -> meeting). Everything else is us acting, not them, and must
+  // not leave a reply behind for the Conversation Agent to classify.
+  const repliedNow =
+    prospect.state === "contacted" && outcome.nextState === "engaged"
+      ? outcome.status === "pending_approval"
+        ? "pricing" // the escalation branch: they asked something we must not answer
+        : "interested"
+      : prospect.state === "engaged" && outcome.nextState === "meeting"
+        ? "booked"
+        : null;
+
   latest.advanceProspect(prospect.id, {
     state: outcome.nextState,
     lastAction: outcome.lastAction,
     touched,
+    ...(parked ? { needsReview: true } : {}),
+    ...(repliedNow
+      ? {
+          lastReply: replyFor(repliedNow),
+          lastReplyAt: new Date().toISOString(),
+          ...(step.channel ? { lastReplyChannel: step.channel } : {}),
+        }
+      : {}),
     ...(outcome.fitScore !== undefined ? { fitScore: outcome.fitScore } : {}),
     ...(outcome.researchBrief ? { researchBrief: outcome.researchBrief } : {}),
     ...(outcome.dossier ? { dossier: outcome.dossier } : {}),

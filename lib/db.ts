@@ -98,6 +98,10 @@ function toProspect(r: Row): Prospect {
     lastActionAt: (r.last_action_at as Date).toISOString(),
     researchBrief: (r.research_brief as string) ?? undefined,
     dossier: (r.dossier as ProspectDossier) ?? undefined,
+    needsReview: (r.needs_review as boolean) ?? false,
+    lastReply: (r.last_reply as string) ?? undefined,
+    lastReplyAt: r.last_reply_at ? (r.last_reply_at as Date).toISOString() : undefined,
+    lastReplyChannel: (r.last_reply_channel as Channel) ?? undefined,
   };
 }
 
@@ -117,6 +121,8 @@ function toEvent(r: Row): ActivityEvent {
     tokens: r.tokens as number,
     latencyMs: (r.latency_ms as number) ?? undefined,
     source: r.source as ActivityEvent["source"],
+    resolvedAt: r.resolved_at ? (r.resolved_at as Date).toISOString() : undefined,
+    resolvedBy: (r.resolved_by as string) ?? undefined,
   };
 }
 
@@ -262,14 +268,17 @@ async function insertProspect(db: PoolClient, p: Prospect) {
     `insert into prospects
        (id, campaign_id, name, title, company, location, email, linkedin,
         state, fit_score, touched, touch_count, last_touch_at, angles_used,
-        last_action, last_action_at, research_brief, dossier)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        last_action, last_action_at, research_brief, dossier, needs_review,
+        last_reply, last_reply_at, last_reply_channel)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
      on conflict (id) do nothing`,
     [
       p.id, p.campaignId, p.name, p.title, p.company, p.location, p.email,
       p.linkedin, p.state, p.fitScore, p.touched, p.touchCount,
       p.lastTouchAt ?? null, p.anglesUsed, p.lastAction, p.lastActionAt,
       p.researchBrief ?? null, p.dossier ? JSON.stringify(p.dossier) : null,
+      p.needsReview ?? false,
+      p.lastReply ?? null, p.lastReplyAt ?? null, p.lastReplyChannel ?? null,
     ],
   );
 }
@@ -392,15 +401,44 @@ export async function applyCommand(cmd: Command): Promise<void> {
              last_action    = coalesce($8, last_action),
              last_action_at = coalesce($9, last_action_at),
              research_brief = coalesce($10, research_brief),
-             dossier        = coalesce($11, dossier)
+             dossier        = coalesce($11, dossier),
+             needs_review   = coalesce($12, needs_review),
+             last_reply     = coalesce($13, last_reply),
+             last_reply_at  = coalesce($14, last_reply_at),
+             last_reply_channel = coalesce($15, last_reply_channel)
            where id = $1`,
           [
             cmd.prospectId, p.state ?? null, p.fitScore ?? null, p.touched ?? null,
             p.touchCount ?? null, p.lastTouchAt ?? null, p.anglesUsed ?? null,
             p.lastAction ?? null, p.lastActionAt ?? null, p.researchBrief ?? null,
             p.dossier ? JSON.stringify(p.dossier) : null,
+            p.needsReview ?? null,
+            p.lastReply ?? null, p.lastReplyAt ?? null, p.lastReplyChannel ?? null,
           ],
         );
+        break;
+      }
+
+      case "resolveEscalation": {
+        // Only the first resolution counts. Two operators clicking at once
+        // must not overwrite each other's name on the audit record.
+        await db.query(
+          `update activity_events
+              set resolved_at = $2, resolved_by = $3
+            where id = $1 and resolved_at is null`,
+          [cmd.eventId, cmd.resolvedAt, cmd.resolvedBy],
+        );
+        if (cmd.prospectId) {
+          await db.query(
+            `update prospects
+                set needs_review   = false,
+                    state          = coalesce($2, state),
+                    last_action    = coalesce($3, last_action),
+                    last_action_at = now()
+              where id = $1`,
+            [cmd.prospectId, cmd.prospectState ?? null, cmd.lastAction ?? null],
+          );
+        }
         break;
       }
 

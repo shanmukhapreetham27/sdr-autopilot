@@ -74,6 +74,29 @@ export const COMPANY_FACTS: Record<string, CompanyFacts> = {
   Stripe: { industry: "Fintech", employees: 8000, location: "San Francisco, CA", country: "United States", domain: "stripe.com" },
   Datadog: { industry: "Observability", employees: 5000, location: "New York, NY", country: "United States", domain: "datadoghq.com" },
   Snowflake: { industry: "Data infrastructure", employees: 7000, location: "Bozeman, MT", country: "United States", domain: "snowflake.com" },
+
+  // --- DACH B2B software / developer infrastructure -----------------------
+  // Headcounts straddle a typical "80-600 employees" band on purpose, so a
+  // DACH campaign has both clear qualifications and real size misses.
+  Camunda: { industry: "Developer infrastructure", employees: 450, location: "Berlin", country: "Germany", domain: "camunda.com" },
+  Cognigy: { industry: "B2B software", employees: 250, location: "Dusseldorf", country: "Germany", domain: "cognigy.com" },
+  Parloa: { industry: "B2B software", employees: 300, location: "Berlin", country: "Germany", domain: "parloa.com" },
+  Ory: { industry: "Developer infrastructure", employees: 90, location: "Munich", country: "Germany", domain: "ory.sh" },
+  Qdrant: { industry: "Developer infrastructure", employees: 120, location: "Berlin", country: "Germany", domain: "qdrant.tech" },
+  Storyblok: { industry: "B2B software", employees: 240, location: "Linz", country: "Austria", domain: "storyblok.com" },
+  Anyline: { industry: "B2B software", employees: 120, location: "Vienna", country: "Austria", domain: "anyline.com" },
+  Frontify: { industry: "B2B software", employees: 350, location: "St. Gallen", country: "Switzerland", domain: "frontify.com" },
+  Ledgy: { industry: "B2B software", employees: 120, location: "Zurich", country: "Switzerland", domain: "ledgy.com" },
+  // Over a mid-market band: the ICP agent should flag these, not pass them.
+  Personio: { industry: "B2B SaaS", employees: 1800, location: "Munich", country: "Germany", domain: "personio.com" },
+  Celonis: { industry: "B2B software", employees: 3000, location: "Munich", country: "Germany", domain: "celonis.com" },
+  Nexthink: { industry: "B2B software", employees: 1100, location: "Lausanne", country: "Switzerland", domain: "nexthink.com" },
+
+  // --- UK & Ireland -------------------------------------------------------
+  Tines: { industry: "B2B software", employees: 250, location: "Dublin", country: "Ireland", domain: "tines.com" },
+  Paddle: { industry: "Fintech", employees: 300, location: "London", country: "United Kingdom", domain: "paddle.com" },
+  Cronofy: { industry: "Developer infrastructure", employees: 90, location: "Nottingham", country: "United Kingdom", domain: "cronofy.com" },
+  Snyk: { industry: "Developer infrastructure", employees: 1200, location: "London", country: "United Kingdom", domain: "snyk.io" },
 };
 
 export function factsFor(company: string): CompanyFacts | undefined {

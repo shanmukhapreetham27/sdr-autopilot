@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { ActivityEvent, Campaign } from "@/lib/types";
+import { useSdr } from "@/lib/store";
 import { AgentTag, ChannelTag, EmptyState, EventStatusDot, timeAgo } from "./ui";
 
 /** Labels where an action really came from, so the UI never overclaims. */
@@ -38,6 +39,8 @@ export default function ActivityFeed({
   height?: string;
 }) {
   const now = useNow();
+  const prospects = useSdr((s) => s.prospects);
+  const resolveEscalation = useSdr((s) => s.resolveEscalation);
 
   if (!events.length) {
     return (
@@ -66,11 +69,16 @@ export default function ActivityFeed({
                 {showCampaign && campaign && (
                   <span className="text-[10px] text-slate-500">{campaign.name}</span>
                 )}
-                {e.status === "pending_approval" && (
-                  <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-                    Needs human
-                  </span>
-                )}
+                {e.status === "pending_approval" &&
+                  (e.resolvedAt ? (
+                    <span className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
+                      Resolved by {e.resolvedBy}
+                    </span>
+                  ) : (
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                      Needs human
+                    </span>
+                  ))}
                 {e.status === "failed" && (
                   <span className="rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-300">
                     Failed
@@ -94,6 +102,19 @@ export default function ActivityFeed({
                 </details>
               )}
 
+              {/* The human half of the loop. A parked prospect needs a
+                  verdict to move at all; everything else only needs clearing
+                  off the queue. */}
+              {e.status === "pending_approval" && !e.resolvedAt && (
+                <ResolveActions
+                  parked={
+                    !!e.prospectId &&
+                    prospects.some((p) => p.id === e.prospectId && p.needsReview)
+                  }
+                  onResolve={(decision) => resolveEscalation(e.id, decision)}
+                />
+              )}
+
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-600">
                 <span>{timeAgo(e.ts, now)}</span>
                 {/* Audit trail: which harness version produced this action. */}
@@ -106,6 +127,60 @@ export default function ActivityFeed({
           </article>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Buttons a reviewer actually acts on.
+ *
+ * Labelled by consequence rather than generic approve/reject: a parked
+ * prospect is being sent somewhere specific in the funnel, and saying so
+ * stops the reviewer having to guess what the button does.
+ */
+function ResolveActions({
+  parked,
+  onResolve,
+}: {
+  parked: boolean;
+  onResolve: (decision: "approved" | "rejected" | "acknowledged") => void;
+}) {
+  const cls =
+    "rounded border px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-40";
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      {parked ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onResolve("approved")}
+            title="Accept the agent's prospect and let it continue down the funnel."
+            className={`${cls} border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20`}
+          >
+            Qualify
+          </button>
+          <button
+            type="button"
+            onClick={() => onResolve("rejected")}
+            title="Remove this prospect from the campaign."
+            className={`${cls} border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20`}
+          >
+            Reject
+          </button>
+          <span className="text-[10px] text-slate-600">
+            Held here until you decide
+          </span>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onResolve("acknowledged")}
+          title="Clear this from the queue. The prospect is already moving."
+          className={`${cls} border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-600`}
+        >
+          Mark handled
+        </button>
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import ActivityFeed from "@/components/ActivityFeed";
 import { useSdr } from "@/lib/store";
 import { Card, Stat } from "@/components/ui";
 
-type Filter = "all" | "escalations" | "failures";
+type Filter = "all" | "escalations" | "open_escalations" | "failures";
 
 export default function ActivityPage() {
   const campaigns = useSdr((s) => s.campaigns);
@@ -16,11 +16,14 @@ export default function ActivityPage() {
   const filtered = activity.filter((e) => {
     if (campaignId !== "all" && e.campaignId !== campaignId) return false;
     if (filter === "escalations") return e.status === "pending_approval";
+    if (filter === "open_escalations") return e.status === "pending_approval" && !e.resolvedAt;
     if (filter === "failures") return e.status === "failed";
     return true;
   });
 
-  const escalations = activity.filter((e) => e.status === "pending_approval").length;
+  const escalations = activity.filter(
+    (e) => e.status === "pending_approval" && !e.resolvedAt,
+  ).length;
   const failures = activity.filter((e) => e.status === "failed").length;
   const tokens = activity.reduce((s, e) => s + e.tokens, 0);
   const dronahqRuns = activity.filter((e) => e.source === "dronahq").length;
@@ -73,7 +76,8 @@ export default function ActivityPage() {
               className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-slate-300 outline-none"
             >
               <option value="all">All events</option>
-              <option value="escalations">Escalations only</option>
+              <option value="open_escalations">Escalations — open</option>
+              <option value="escalations">Escalations — all</option>
               <option value="failures">Failures only</option>
             </select>
           </div>

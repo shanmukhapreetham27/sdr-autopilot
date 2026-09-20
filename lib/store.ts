@@ -11,6 +11,7 @@ import type {
   Channel,
   Funnel,
   Prospect,
+  ProspectState,
   PromptVersion,
 } from "./types";
 import { STAGES } from "./types";
@@ -87,6 +88,27 @@ export interface SdrState {
   advanceProspect: (prospectId: string, patch: Partial<Prospect>) => void;
   addProspect: (prospect: Prospect) => void;
 
+  // --- human in the loop ---
+  resolveEscalation: (eventId: string, decision: EscalationDecision) => void;
+
+}
+
+/**
+ * What a reviewer decided about an escalation.
+ *
+ * 'acknowledged' exists because not every escalation holds a prospect: an
+ * agent that handed a pricing question to a human left the prospect moving,
+ * so there is nothing to release — only a note to clear.
+ */
+export type EscalationDecision = "approved" | "rejected" | "acknowledged";
+
+/** Whoever is driving the console. Single-operator build; see README. */
+const OPERATOR = "Priya Nair";
+
+/** One step further down the funnel, or the same state at the end of it. */
+function nextStage(state: ProspectState): ProspectState {
+  const i = (STAGES as readonly string[]).indexOf(state);
+  return i >= 0 && i < STAGES.length - 1 ? STAGES[i + 1] : state;
 }
 
 function now() {
@@ -426,6 +448,77 @@ export const useSdr = create<SdrState>()((set, get) => ({
     set((s) => ({ prospects: [...s.prospects, prospect] }));
     dispatch({ op: "addProspect", prospect });
   },
+
+  resolveEscalation: (eventId, decision) => {
+    const state = get();
+    const event = state.activity.find((e) => e.id === eventId);
+    // Already resolved, by this operator or another tab. Resolving twice
+    // would overwrite the name on the audit record.
+    if (!event || event.resolvedAt) return;
+
+    const prospect = event.prospectId
+      ? state.prospects.find((p) => p.id === event.prospectId)
+      : undefined;
+
+    // Only a parked prospect moves. Acknowledging an escalation on a prospect
+    // that kept flowing is a note, not a funnel decision.
+    const parked = prospect?.needsReview ? prospect : undefined;
+    const prospectState: ProspectState | undefined =
+      parked && decision === "approved"
+        ? nextStage(parked.state)
+        : parked && decision === "rejected"
+          ? "rejected"
+          : undefined;
+
+    const verb =
+      decision === "approved" ? "approved" : decision === "rejected" ? "rejected" : "acknowledged";
+    const lastAction = parked ? `Escalation ${verb} by ${OPERATOR}` : undefined;
+    const resolvedAt = now();
+
+    set((s) => ({
+      activity: s.activity.map((e) =>
+        e.id === eventId ? { ...e, resolvedAt, resolvedBy: OPERATOR } : e,
+      ),
+      prospects: s.prospects.map((p) =>
+        parked && p.id === parked.id
+          ? {
+              ...p,
+              needsReview: false,
+              ...(prospectState ? { state: prospectState } : {}),
+              ...(lastAction ? { lastAction, lastActionAt: resolvedAt } : {}),
+            }
+          : p,
+      ),
+    }));
+
+    dispatch({
+      op: "resolveEscalation",
+      eventId,
+      resolvedBy: OPERATOR,
+      resolvedAt,
+      ...(parked ? { prospectId: parked.id } : {}),
+      ...(prospectState ? { prospectState } : {}),
+      ...(lastAction ? { lastAction } : {}),
+    });
+
+    // The decision is itself an auditable action, and the point of the
+    // escalation queue is showing that a human made it.
+    get().pushEvent({
+      campaignId: event.campaignId,
+      agent: "system",
+      prospectId: parked?.id,
+      prospectName: parked?.name ?? event.prospectName,
+      summary: parked
+        ? `${OPERATOR} ${verb} the escalation on ${parked.name}` +
+          (prospectState ? ` — moved to ${prospectState}` : "")
+        : `${OPERATOR} ${verb} an escalation`,
+      status: "success",
+      versionId:
+        state.campaigns.find((c) => c.id === event.campaignId)?.activeVersionId ?? "-",
+      tokens: 0,
+      source: "simulated",
+    });
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -477,7 +570,7 @@ export function metricsFor(
     meetings: funnel.meeting,
     replies: events.filter((e) => e.agent === "conversation").length,
     failures: events.filter((e) => e.status === "failed").length,
-    escalations: events.filter((e) => e.status === "pending_approval").length,
+    escalations: events.filter((e) => e.status === "pending_approval" && !e.resolvedAt).length,
     tokens: events.reduce((sum, e) => sum + e.tokens, 0),
     funnel,
   };
