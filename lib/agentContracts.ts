@@ -363,6 +363,17 @@ function actionToken(d: Record<string, unknown>, text: string): string {
   return raw.toUpperCase();
 }
 
+/**
+ * True when DronaHQ returned a completed run with no output at all.
+ *
+ * Observed to be intermittent and to worsen under rapid successive calls:
+ * the identical payload can return null twice and then succeed. Treated as
+ * retryable rather than as the agent's answer.
+ */
+export function isEmptyResponse(raw: unknown): boolean {
+  return unwrapEnvelope(raw).empty === true;
+}
+
 export function parseResponse(task: LiveAgentKey, raw: unknown): AgentOutcome {
   const { payload, empty } = unwrapEnvelope(raw);
 

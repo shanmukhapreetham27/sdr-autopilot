@@ -22,7 +22,7 @@
  * The Voice SDR agent is deliberately not wired; it stays simulated.
  */
 
-import { parseResponse, type AgentOutcome } from "./agentContracts";
+import { isEmptyResponse, parseResponse, type AgentOutcome } from "./agentContracts";
 import { LIVE_CAPABLE_AGENTS } from "./types";
 import type { LiveAgentKey } from "./types";
 
@@ -116,9 +116,30 @@ function summariseErrorBody(text: string): string {
 }
 
 /**
- * Call one DronaHQ agent. Retries once on a network error or 5xx, because a
- * single transient failure should not stall a campaign; anything else is
- * surfaced to the caller so the activity log can record a real failure.
+ * Minimum gap between calls to the *same* agent.
+ *
+ * The loop can ask one agent to work several times in a few seconds, and the
+ * agents return empty runs under that pressure. Spacing calls per agent costs
+ * a little latency and removes most of the empty responses.
+ */
+const MIN_GAP_PER_AGENT_MS = 3_000;
+const lastCallAt = new Map<LiveAgentKey, number>();
+
+/** Attempts per call, including the first. */
+const MAX_ATTEMPTS = 2;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Call one DronaHQ agent.
+ *
+ * Retries on three conditions, because each is transient: a network error, a
+ * 5xx, and a completed run that returned no output. That last one is the
+ * common case — the same payload can return null twice and then succeed — so
+ * treating it as a failure would stall prospects that nothing is wrong with.
+ *
+ * A 4xx is not retried: a bad key, unknown agent or malformed payload will
+ * fail identically every time.
  */
 export async function callAgent(
   agent: LiveAgentKey,
@@ -131,10 +152,22 @@ export async function callAgent(
     return { ok: false, error: `No DronaHQ webhook configured for "${agent}"`, ms: 0 };
   }
 
+  // Space calls to this agent, whoever asked for them.
+  const since = Date.now() - (lastCallAt.get(agent) ?? 0);
+  if (since < MIN_GAP_PER_AGENT_MS) await sleep(MIN_GAP_PER_AGENT_MS - since);
+  lastCallAt.set(agent, Date.now());
+
   let lastError = "Unknown error";
   let lastStatus: number | undefined;
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      // Linear backoff. The agents take ~5s each, so this stays inside the
+      // request timeout while giving them room to recover.
+      await sleep(attempt * 2_000);
+      lastCallAt.set(agent, Date.now());
+    }
+
     try {
       const res = await fetch(endpoint.url, {
         method: "POST",
@@ -152,7 +185,6 @@ export async function callAgent(
       if (!res.ok) {
         lastStatus = res.status;
         lastError = `DronaHQ returned ${res.status}: ${summariseErrorBody(text)}`;
-        // 4xx is our fault (bad key, bad agent, bad payload) - retrying won't help.
         if (res.status < 500) break;
         continue;
       }
@@ -162,6 +194,11 @@ export async function callAgent(
         parsed = JSON.parse(text);
       } catch {
         // Agent returned prose instead of JSON. parseResponse handles that.
+      }
+
+      if (isEmptyResponse(parsed)) {
+        lastError = `DronaHQ completed the run but returned no output (${attempt}/${MAX_ATTEMPTS} attempts)`;
+        continue;
       }
 
       return {
