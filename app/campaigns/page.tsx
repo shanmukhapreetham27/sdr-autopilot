@@ -58,20 +58,31 @@ export default function CampaignsPage() {
         />
       </div>
 
+      {/* Duplicate prospects across campaigns are expected, not a fault: the
+          same person can match two ICPs. Styled as a resolved status rather
+          than a warning, because the platform has already acted — the point
+          is that contacting someone twice was prevented. */}
       {conflicts.length > 0 && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-          <div className="flex items-center gap-2 text-sm font-medium text-amber-300">
-            <span>⚠</span> Cross-campaign conflict detected
+        <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/5 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-indigo-300">⧉</span>
+            <span className="text-sm font-medium text-slate-200">
+              Duplicate prospect handled
+            </span>
+            <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
+              Resolved
+            </span>
           </div>
           <div className="mt-2 space-y-1.5">
             {conflicts.map((c) => (
-              <p key={c.email} className="text-xs text-amber-200/80">
-                <span className="font-medium text-amber-200">{c.name}</span> ({c.email}) is
-                targeted by{" "}
+              <p key={c.email} className="text-xs leading-relaxed text-slate-400">
+                <span className="font-medium text-slate-200">{c.name}</span> ({c.email}) matches
+                the ICP of{" "}
                 {c.entries
                   .map((e) => campaigns.find((x) => x.id === e.campaignId)?.name ?? e.campaignId)
                   .join(" and ")}
-                . Outreach is held on the lower-priority campaign until an operator resolves it.
+                . Outreach is running on the higher-priority campaign only, so they are not
+                contacted twice.
               </p>
             ))}
           </div>
