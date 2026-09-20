@@ -1,14 +1,13 @@
 "use client";
 
-import type { AgentRequest, AgentResult } from "./dronahq";
-import { buildBrief } from "./agentBrief";
-import type { Campaign, Channel, LiveAgentKey, Prospect } from "./types";
+import { buildRequest, type AgentOutcome } from "./agentContracts";
+import type { Campaign, LiveAgentKey, Prospect } from "./types";
 
 /**
  * Browser-side bridge to the DronaHQ agents.
  *
- * Only types are imported from `lib/dronahq` — that module reads API keys and
- * must never be bundled for the client. All traffic goes through the
+ * Nothing is imported from `lib/dronahq` - that module reads API keys and must
+ * never be bundled for the client. All traffic goes through the
  * `/api/agents/*` routes, which attach the key server-side.
  */
 
@@ -30,33 +29,23 @@ export async function fetchIntegrationStatus(): Promise<IntegrationStatus | null
   }
 }
 
-/** Build the payload a DronaHQ agent webhook accepts. */
+/** Build the exact body the given agent's Webhook Input declares. */
 export function buildAgentRequest(
   task: LiveAgentKey,
   campaign: Campaign,
   prospect: Prospect,
-  openChannels: Channel[],
-): AgentRequest {
-  return {
-    // The agents bind on `message`. Everything the agent needs — including
-    // the campaign's own system and agent prompts — is rendered into it.
-    message: buildBrief(task, campaign, prospect, openChannels),
-    // Ignored by the binding, but carried through to DronaHQ's Request Logs
-    // so a run can be traced back to a campaign and prospect.
-    task,
-    campaign_id: campaign.id,
-    prospect_id: prospect.id,
-  };
+): Record<string, unknown> {
+  return buildRequest(task, campaign, prospect);
 }
 
 export type InvokeOutcome =
-  | { ok: true; result: AgentResult; ms: number }
+  | { ok: true; result: AgentOutcome; ms: number }
   | { ok: false; error: string; ms: number };
 
 /** Call one agent through the server proxy. Never throws. */
 export async function invokeAgent(
   agent: LiveAgentKey,
-  payload: AgentRequest,
+  payload: Record<string, unknown>,
 ): Promise<InvokeOutcome> {
   const started = Date.now();
   try {

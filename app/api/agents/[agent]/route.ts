@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { callAgent, isLiveCapable, type AgentRequest } from "@/lib/dronahq";
+import { callAgent, isLiveCapable } from "@/lib/dronahq";
 
 /**
  * Proxy from the browser to a DronaHQ agent.
@@ -17,9 +17,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ agent: str
     );
   }
 
-  let payload: AgentRequest;
+  let payload: Record<string, unknown>;
   try {
-    payload = (await request.json()) as AgentRequest;
+    payload = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ ok: false, error: "Body must be JSON" }, { status: 400 });
   }

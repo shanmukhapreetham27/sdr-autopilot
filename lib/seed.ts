@@ -1,6 +1,7 @@
 import type {
   AgentKey,
   Campaign,
+  CampaignPolicy,
   Channel,
   ChannelConfig,
   Prospect,
@@ -65,6 +66,29 @@ function version(
   return { id, version: v, createdAt, author, note, systemPrompt, agentPrompts };
 }
 
+
+/**
+ * Campaign policy, fed straight to the agents as their declared input
+ * variables. Each campaign tunes these: BFSI is slower and more cautious than
+ * founder outreach, so its cadence and thresholds differ.
+ */
+function policy(over: Partial<CampaignPolicy> = {}): CampaignPolicy {
+  return {
+    minScoreThreshold: 0.6,
+    maxTouches: 4,
+    minDaysBetweenTouches: 3,
+    stopPolicy:
+      "Hard stop on: unsubscribe, remove me, take me off your list, do not contact, legal threat.",
+    escalationPolicy:
+      "Escalate on: pricing, discounts, contract terms, legal, security review, procurement, competitor comparison.",
+    researchFocus: "Signals suggesting the team is outgrowing its current developer infrastructure.",
+    productPositioning:
+      "Developer infrastructure that removes manual service provisioning as an engineering team scales.",
+    senderIdentity: { name: "Priya Nair", title: "Founding GTM", company: "Conduit" },
+    ...over,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Campaigns
 // ---------------------------------------------------------------------------
@@ -121,6 +145,7 @@ export const SEED_CAMPAIGNS: Campaign[] = [
     channels: channels(["email", "linkedin"]),
     agents: agentConfigs(["voice"]),
     dailyLimit: 60,
+    policy: policy(),
     activeVersionId: "v_ussaas_2",
     versions: [
       version(
@@ -162,6 +187,18 @@ export const SEED_CAMPAIGNS: Campaign[] = [
     channels: channels(["email", "linkedin"]),
     agents: agentConfigs(["voice", "conversation"]),
     dailyLimit: 25,
+    policy: policy({
+      // Regulated, relationship-driven segment: slower cadence, higher bar.
+      minScoreThreshold: 0.7,
+      maxTouches: 3,
+      minDaysBetweenTouches: 7,
+      researchFocus:
+        "Core system modernisation programmes, regulatory deadlines and published digital initiatives.",
+      escalationPolicy:
+        "Escalate on: pricing, contract terms, legal, procurement, regulatory or audit questions, and any request routed via compliance.",
+      productPositioning:
+        "Modernising core systems without disrupting existing regulated workflows.",
+    }),
     activeVersionId: "v_bfsi_1",
     versions: [
       version(
@@ -194,6 +231,15 @@ export const SEED_CAMPAIGNS: Campaign[] = [
     channels: channels(["linkedin", "voice", "email"]),
     agents: agentConfigs([]),
     dailyLimit: 40,
+    policy: policy({
+      // Founders reply fast or never; shorter sequence, tighter cadence.
+      minScoreThreshold: 0.65,
+      maxTouches: 3,
+      minDaysBetweenTouches: 2,
+      researchFocus:
+        "What they have shipped or said publicly in the last 90 days, and their funding stage.",
+      senderIdentity: { name: "Priya Nair", title: "Co-founder", company: "Conduit" },
+    }),
     activeVersionId: "v_voice_1",
     versions: [
       version(
@@ -226,6 +272,14 @@ export const SEED_CAMPAIGNS: Campaign[] = [
     channels: channels(["email"]),
     agents: agentConfigs(["voice", "conversation", "followup"]),
     dailyLimit: 10,
+    policy: policy({
+      // Existing customers: every first touch is reviewed by a human.
+      minScoreThreshold: 0.8,
+      maxTouches: 2,
+      minDaysBetweenTouches: 14,
+      researchFocus: "Current product usage and problems the account has already reported.",
+      productPositioning: "Expanding an existing deployment to teams not yet onboarded.",
+    }),
     activeVersionId: "v_exp_1",
     versions: [
       version(
@@ -287,6 +341,10 @@ function mkProspects(campaignId: string, prefix: string, rows: SeedProspect[]): 
       touched,
       lastAction,
       lastActionAt: "2026-09-20T07:00:00.000Z",
+      // Sequence state the outreach and follow-up agents reason over.
+      touchCount: touched.length,
+      lastTouchAt: touched.length ? "2026-09-20T07:00:00.000Z" : undefined,
+      anglesUsed: [],
     };
   });
 }

@@ -118,6 +118,9 @@ export const useSdr = create<SdrState>()(
           },
           agents: SEED_CAMPAIGNS[0].agents.map((a) => ({ ...a, enabled: true, paused: false })),
           dailyLimit: input.dailyLimit,
+          // New campaigns inherit the platform default policy; it is tuned
+          // per campaign afterwards.
+          policy: { ...SEED_CAMPAIGNS[0].policy },
           versions: [
             {
               id: `${id}_v1`,

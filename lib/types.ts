@@ -96,6 +96,30 @@ export interface PromptVersion {
   agentPrompts: Record<AgentKey, string>;
 }
 
+/**
+ * Campaign policy, supplied to the DronaHQ agents as their declared input
+ * variables. Field names here mirror the agents' own contracts so the mapping
+ * in lib/agentContracts.ts stays one-to-one and greppable.
+ */
+export interface CampaignPolicy {
+  /** ICP agent's min_score_threshold. DECIMAL 0-1, not a 0-100 score. */
+  minScoreThreshold: number;
+  /** Outreach + follow-up agents: sequence ceiling. */
+  maxTouches: number;
+  /** Outreach + follow-up agents: minimum days between touches. */
+  minDaysBetweenTouches: number;
+  /** Conversation agent: replies that must suppress the prospect outright. */
+  stopPolicy: string;
+  /** Conversation agent: replies that must go to a human. */
+  escalationPolicy: string;
+  /** Research agent: what this campaign wants the dossier to focus on. */
+  researchFocus: string;
+  /** Personalisation agent: framing only, never quoted at the prospect. */
+  productPositioning: string;
+  /** Personalisation agent: who the message is from. */
+  senderIdentity: { name: string; title: string; company: string };
+}
+
 export interface ICP {
   label: string;
   geography: string;
@@ -117,6 +141,7 @@ export interface Campaign {
   agents: AgentConfig[];
   /** Max autonomous outreach actions per day for this campaign. */
   dailyLimit: number;
+  policy: CampaignPolicy;
   versions: PromptVersion[];
   activeVersionId: string;
 }
@@ -135,6 +160,12 @@ export interface Prospect {
   fitScore: number;
   /** Channels this prospect has actually been contacted on. */
   touched: Channel[];
+  /** Sequence position input for the outreach and follow-up agents. */
+  touchCount: number;
+  /** ISO timestamp of the last outbound touch, for cadence decisions. */
+  lastTouchAt?: string;
+  /** Angles already used, so the next message leads on something new. */
+  anglesUsed: string[];
   lastAction: string;
   lastActionAt: string;
   /**
@@ -145,6 +176,21 @@ export interface Prospect {
    * about the company.
    */
   researchBrief?: string;
+  /** Structured dossier returned by the Research Agent, when it parsed. */
+  dossier?: ProspectDossier;
+}
+
+/** Subset of the Research Agent's Prospect Dossier schema that the app uses. */
+export interface ProspectDossier {
+  company?: Record<string, unknown>;
+  person?: Record<string, unknown>;
+  signals?: string[];
+  talking_points?: string[];
+  pain_hypotheses?: string[];
+  tech_stack?: string[];
+  unknowns?: string[];
+  flags?: string[];
+  overall_confidence?: string;
 }
 
 export type EventStatus = "success" | "failed" | "pending_approval";

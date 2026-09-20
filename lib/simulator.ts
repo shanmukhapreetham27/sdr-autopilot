@@ -3,7 +3,6 @@
 import type { AgentKey, Campaign, Channel, Prospect, Stage } from "./types";
 import { useSdr } from "./store";
 import { buildAgentRequest, invokeAgent, type LiveAgentKey } from "./agentClient";
-import { summarise } from "./agentBrief";
 
 /**
  * Agent execution loop.
@@ -406,15 +405,10 @@ function discoverProspect(campaign: Campaign): { prospect: Prospect; source: str
       touched: [],
       lastAction: "Discovered, awaiting ICP scoring",
       lastActionAt: new Date().toISOString(),
+      touchCount: 0,
+      anglesUsed: [],
     },
   };
-}
-
-/** Channels this campaign may currently use, for the agent payload. */
-function openChannels(campaign: Campaign): Channel[] {
-  return (Object.keys(campaign.channels) as Channel[]).filter(
-    (c) => campaign.channels[c].enabled && !campaign.channels[c].paused,
-  );
 }
 
 /**
@@ -442,15 +436,13 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       message: undefined as string | undefined,
       latencyMs: undefined as number | undefined,
       researchBrief: undefined as string | undefined,
+      dossier: undefined as Prospect["dossier"],
+      countsAsTouch: step.agent === "personalisation" && step.status === "success",
+      angle: undefined as string | undefined,
     };
   }
 
-  const payload = buildAgentRequest(
-    step.agent as LiveAgentKey,
-    campaign,
-    prospect,
-    openChannels(campaign),
-  );
+  const payload = buildAgentRequest(step.agent as LiveAgentKey, campaign, prospect);
   const outcome = await invokeAgent(step.agent as LiveAgentKey, payload);
 
   if (!outcome.ok) {
@@ -467,44 +459,41 @@ async function executeStep(campaign: Campaign, step: AgentStep, liveAgents: Agen
       message: undefined,
       latencyMs: outcome.ms,
       researchBrief: undefined,
+      dossier: undefined,
+      countsAsTouch: false,
+      angle: undefined,
     };
   }
 
   const r = outcome.result;
 
-  // The agent's own verdict overrides the locally decided outcome.
-  const rejected = r.advance === false && step.agent === "icp_fitment";
-  const held = r.advance === false && step.agent !== "icp_fitment";
+  // The agent's decision is authoritative. These agents are built to prefer
+  // escalating over guessing, and the app must not quietly override that.
+  const nextState =
+    r.decision === "reject"
+      ? ("rejected" as const)
+      : r.decision === "advance"
+        ? step.nextState
+        : prospect.state;
 
-  const nextState = rejected
-    ? ("rejected" as const)
-    : held
-      ? prospect.state
-      : step.nextState;
-
-  const headline = summarise(r.text);
-  const scoreNote = r.score !== undefined ? ` (${r.score}/100)` : "";
-  const verdictNote = r.verdict ? ` — ${r.verdict}` : "";
+  const escalated = r.decision === "escalate" || r.requiresReview;
 
   return {
     source: "dronahq" as const,
-    summary: `${prospect.name}${scoreNote}${verdictNote}: ${headline}`,
-    lastAction: headline,
-    status: r.escalate ? ("pending_approval" as const) : ("success" as const),
+    summary: r.verdict ? `${prospect.name} [${r.verdict}] ${r.headline}` : `${prospect.name}: ${r.headline}`,
+    lastAction: r.headline,
+    status: escalated ? ("pending_approval" as const) : ("success" as const),
     nextState,
-    // DronaHQ does not return token usage on the webhook response, and
-    // attributing a simulated number to a real agent run would make the cost
-    // figures fiction. Latency is recorded instead; usage lives in DronaHQ's
-    // own credit dashboard.
     tokens: 0,
     fitScore: r.score ?? step.fitScore,
-    // Keep the agent's full output so a manager can read exactly what it
-    // produced, not just the one-line summary.
-    message: r.text,
+    // The agent's full output, so a manager can read exactly what it produced.
+    message: r.subject ? `Subject: ${r.subject}\n\n${r.body ?? r.text}` : r.text,
     latencyMs: outcome.ms,
-    // Persist the Research Agent's brief on the prospect so downstream
-    // agents write from verified context rather than inventing facts.
     researchBrief: step.agent === "research" ? r.text : undefined,
+    dossier: r.dossier,
+    // A drafted message is an outbound touch; the sequence agents count these.
+    countsAsTouch: step.agent === "personalisation" && r.decision === "advance",
+    angle: r.angle,
   };
 }
 
@@ -585,6 +574,16 @@ async function runCampaignTick(campaign: Campaign) {
     touched,
     ...(outcome.fitScore !== undefined ? { fitScore: outcome.fitScore } : {}),
     ...(outcome.researchBrief ? { researchBrief: outcome.researchBrief } : {}),
+    ...(outcome.dossier ? { dossier: outcome.dossier } : {}),
+    ...(outcome.countsAsTouch
+      ? {
+          touchCount: prospect.touchCount + 1,
+          lastTouchAt: new Date().toISOString(),
+          anglesUsed: outcome.angle
+            ? [...prospect.anglesUsed, outcome.angle]
+            : prospect.anglesUsed,
+        }
+      : {}),
   });
 
   latest.pushEvent({

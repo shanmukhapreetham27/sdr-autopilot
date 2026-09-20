@@ -7,19 +7,22 @@
  *
  * Integration shape, verified against the live DronaHQ endpoints:
  *   - Each published agent exposes a unique Webhook Trigger URL.
- *   - Auth is the `api-key: <secret>` header — NOT `Authorization: Bearer`.
- *   - The agents bind on a single top-level `message` string. Posting nested
- *     JSON instead returns "Input binding failed", so the app renders its
- *     state into a natural-language brief (see lib/agentBrief.ts).
- *   - Responses come back as
- *     `{ success, thread_id, run_id, message, response }`, with the agent's
- *     own output in `response` — today a string, not structured JSON.
+ *   - Auth is the `api-key: <secret>` header, NOT `Authorization: Bearer`.
+ *   - Every agent declares its own Webhook Input fields, and those names are
+ *     load-bearing: leaving one unbound makes the agent's own guard fire
+ *     (the ICP agent answers "input binding failed" rather than guessing).
+ *     The per-agent shapes live in lib/agentContracts.ts.
+ *   - Responses arrive as
+ *     `{ success, thread_id, run_id, message, response }` with the agent's
+ *     output in `response` - JSON when the trigger's Response is configured
+ *     as Standard with the agent's schema, prose otherwise. Both are parsed.
  *   - An unpublished agent returns HTTP 500 "this agent's data hasn't been
  *     published or is unavailable".
  *
  * The Voice SDR agent is deliberately not wired; it stays simulated.
  */
 
+import { parseResponse, type AgentOutcome } from "./agentContracts";
 import { LIVE_CAPABLE_AGENTS } from "./types";
 import type { LiveAgentKey } from "./types";
 
@@ -71,157 +74,20 @@ export function wiredAgents(): LiveAgentKey[] {
 }
 
 // ---------------------------------------------------------------------------
-// Request contract
+// Request / response contracts
 // ---------------------------------------------------------------------------
+//
+// The per-agent shapes live in lib/agentContracts.ts, which is free of any
+// environment access so both the server route and the browser can import it.
 
-/**
- * What a DronaHQ agent webhook accepts.
- *
- * Verified against the live endpoints: the agents bind on the top-level
- * `message` string. Extra keys are accepted and ignored by the binding, so
- * they are sent for traceability in DronaHQ's Request Logs.
- *
- * `thread_id` is deliberately NOT sent. DronaHQ issues its own thread UUIDs
- * per assistant; passing an arbitrary id fails with "Assistant ID does not
- * match thread". Every call carries full context instead.
- */
-export interface AgentRequest {
-  message: string;
-  task: LiveAgentKey;
-  campaign_id: string;
-  prospect_id: string;
-}
-
-// ---------------------------------------------------------------------------
-// Response handling
-// ---------------------------------------------------------------------------
-
-/**
- * DronaHQ's webhook envelope:
- *   { success, thread_id, run_id, message, response }
- * where `response` holds the agent's own output — usually a string.
- */
-export interface AgentResult {
-  /** The agent's full output text, shown expandable in the activity feed. */
-  text: string;
-  /** ICP score, when the agent returned one. */
-  score?: number;
-  /** Raw verdict token, e.g. QUALIFIED, REJECTED, ESCALATE, HOLD, STOP. */
-  verdict?: string;
-  /** false means "do not advance this prospect". */
-  advance?: boolean;
-  /** true means a human must take over. */
-  escalate?: boolean;
-  /** Channel the agent chose, when it made that decision. */
-  channel?: string;
-  /** DronaHQ run identifier, for cross-referencing their Request Logs. */
-  runId?: string;
-  raw: unknown;
-}
-
-type Dict = Record<string, unknown>;
-const asDict = (v: unknown): Dict => (v && typeof v === "object" ? (v as Dict) : {});
-
-/**
- * Map an agent's output onto `AgentResult`.
- *
- * Handles both shapes: a plain string (what the live agents return today) and
- * structured JSON (what they would return if Structured Output were enabled).
- * A response that matches neither degrades to a logged event rather than
- * crashing the run.
- */
-export function normaliseAgentResult(agent: LiveAgentKey, raw: unknown): AgentResult {
-  const root = asDict(raw);
-  const runId = typeof root.run_id === "string" ? root.run_id : undefined;
-  const payload = root.response ?? root.result ?? root.data ?? root.output ?? raw;
-
-  // --- structured output path ---
-  if (payload && typeof payload === "object") {
-    const body = asDict(payload);
-    const text =
-      typeof body.message === "string"
-        ? body.message
-        : typeof body.summary === "string"
-          ? body.summary
-          : JSON.stringify(body, null, 2);
-    const verdict = typeof body.verdict === "string" ? body.verdict.toUpperCase() : undefined;
-    return {
-      text,
-      score: typeof body.score === "number" ? body.score : undefined,
-      verdict,
-      advance: typeof body.advance === "boolean" ? body.advance : verdictAdvance(verdict),
-      escalate: typeof body.escalate === "boolean" ? body.escalate : verdictEscalate(verdict),
-      channel: typeof body.channel === "string" ? body.channel : undefined,
-      runId,
-      raw,
-    };
-  }
-
-  // --- text path (what the live agents return) ---
-  const text = typeof payload === "string" ? payload.trim() : "";
-
-  // Some agents return JSON *as a string* — `{"verdict": "QUALIFIED", ...}`.
-  // Parse it so the structured path handles it, rather than regexing JSON.
-  if (text.startsWith("{") || text.startsWith("[")) {
-    try {
-      const reparsed: unknown = JSON.parse(text);
-      if (reparsed && typeof reparsed === "object") {
-        const inner = normaliseAgentResult(agent, { response: reparsed, run_id: runId });
-        return { ...inner, raw };
-      }
-    } catch {
-      // Looked like JSON but wasn't. Fall through to plain-text parsing.
-    }
-  }
-
-  if (!text) {
-    return {
-      text: `${agent} returned an empty response`,
-      advance: false,
-      runId,
-      raw,
-    };
-  }
-
-  const scoreMatch = text.match(/fit[_\s]?score\s*[:=]?\s*(\d{1,3})/i) ?? text.match(/\bscore\s*[:=]\s*(\d{1,3})/i);
-  const score = scoreMatch ? Math.min(100, Number(scoreMatch[1])) : undefined;
-
-  const verdictMatch = text.match(/verdict\s*[:=]?\s*([A-Za-z_]+)/i);
-  const verdict = verdictMatch ? verdictMatch[1].toUpperCase() : undefined;
-
-  const channelMatch = text.match(/channel\s*[:=]\s*([a-z]+)/i);
-
-  return {
-    text,
-    score,
-    verdict,
-    advance: verdictAdvance(verdict),
-    escalate: verdictEscalate(verdict),
-    channel: channelMatch ? channelMatch[1].toLowerCase() : undefined,
-    runId,
-    raw,
-  };
-}
-
-/** Verdict tokens that mean "do not move this prospect forward". */
-function verdictAdvance(verdict?: string): boolean | undefined {
-  if (!verdict) return undefined;
-  if (/REJECT|DISQUALIF|STOP|HOLD|NEEDS_REVIEW/.test(verdict)) return false;
-  if (/QUALIFIED|CONTACT|PROCEED|FOLLOW_UP|APPROVE/.test(verdict)) return true;
-  return undefined;
-}
-
-function verdictEscalate(verdict?: string): boolean | undefined {
-  if (!verdict) return undefined;
-  return /ESCALATE|NEEDS_REVIEW|REVIEW/.test(verdict);
-}
+export type { AgentOutcome, Decision } from "./agentContracts";
 
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
 
 export type AgentCallOutcome =
-  | { ok: true; result: AgentResult; ms: number }
+  | { ok: true; result: AgentOutcome; ms: number }
   | { ok: false; error: string; status?: number; ms: number };
 
 const TIMEOUT_MS = 60_000;
@@ -239,7 +105,7 @@ function summariseErrorBody(text: string): string {
     const msg = json.error ?? json.message ?? json.detail;
     if (typeof msg === "string" && msg.trim()) return msg.trim().slice(0, 160);
   } catch {
-    // Not JSON — fall through to markup stripping.
+    // Not JSON - fall through to markup stripping.
   }
   const stripped = text
     .replace(/<[^>]*>/g, " ")
@@ -256,7 +122,7 @@ function summariseErrorBody(text: string): string {
  */
 export async function callAgent(
   agent: LiveAgentKey,
-  payload: AgentRequest,
+  payload: Record<string, unknown>,
 ): Promise<AgentCallOutcome> {
   const endpoint = endpointFor(agent);
   const started = Date.now();
@@ -286,7 +152,7 @@ export async function callAgent(
       if (!res.ok) {
         lastStatus = res.status;
         lastError = `DronaHQ returned ${res.status}: ${summariseErrorBody(text)}`;
-        // 4xx is our fault (bad key, bad agent, bad payload) — retrying won't help.
+        // 4xx is our fault (bad key, bad agent, bad payload) - retrying won't help.
         if (res.status < 500) break;
         continue;
       }
@@ -295,12 +161,12 @@ export async function callAgent(
       try {
         parsed = JSON.parse(text);
       } catch {
-        // Agent returned prose instead of JSON. normalise handles that.
+        // Agent returned prose instead of JSON. parseResponse handles that.
       }
 
       return {
         ok: true,
-        result: normaliseAgentResult(agent, parsed),
+        result: parseResponse(agent, parsed),
         ms: Date.now() - started,
       };
     } catch (err) {
