@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { findConflicts, metricsFor, useSdr } from "@/lib/store";
 import type { Campaign, Channel } from "@/lib/types";
 import { Button, ChannelTag, Stat, StatusPill } from "@/components/ui";
@@ -14,6 +15,13 @@ export default function CampaignsPage() {
   const killSwitch = useSdr((s) => s.killSwitch);
   const setCampaignStatus = useSdr((s) => s.setCampaignStatus);
   const duplicateCampaign = useSdr((s) => s.duplicateCampaign);
+
+  // Archived campaigns are kept, not deleted — their history and analytics
+  // stay available — but they are not operational, so they are out of the way
+  // by default. The toggle names the count so nothing silently disappears.
+  const [showArchived, setShowArchived] = useState(false);
+  const archived = campaigns.filter((c) => c.status === "archived");
+  const visible = showArchived ? campaigns : campaigns.filter((c) => c.status !== "archived");
 
   const conflicts = findConflicts(prospects, campaigns).filter((c) => c.bothLive);
 
@@ -37,13 +45,22 @@ export default function CampaignsPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-100">Campaigns</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {campaigns.length} campaigns · {liveCount} executing right now. Each runs its own
+            {visible.length} campaigns · {liveCount} executing right now. Each runs its own
             ICP, prompts, agents and channels independently.
           </p>
         </div>
-        <Link href="/campaigns/new">
-          <Button variant="primary">+ New campaign</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {archived.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setShowArchived(!showArchived)}>
+              {showArchived
+                ? `Hide ${archived.length} archived`
+                : `Show ${archived.length} archived`}
+            </Button>
+          )}
+          <Link href="/campaigns/new">
+            <Button variant="primary">+ New campaign</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -104,7 +121,7 @@ export default function CampaignsPage() {
             </tr>
           </thead>
           <tbody>
-            {campaigns.map((c) => (
+            {visible.map((c) => (
               <CampaignRow
                 key={c.id}
                 campaign={c}
