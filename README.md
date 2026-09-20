@@ -192,6 +192,46 @@ Secrets are never committed. `.env*` files are gitignored.
 
 ---
 
+## Where the data comes from
+
+Being precise about this, because it is the part of the build that is *not* live.
+
+| Data | Source | Real? |
+| --- | --- | --- |
+| Campaign config — ICP, prompts, channels, limits | `lib/seed.ts`, hardcoded | Authored for the demo |
+| Prospect **companies** | `lib/seed.ts` and `lib/simulator.ts` | ✅ Real, publicly known companies |
+| Prospect **contacts** — names, titles, emails | Synthetic personas | ❌ Fictional, deliberately |
+| Company research | DronaHQ Research Agent, live web lookup | ✅ Real, with cited sources |
+| ICP scoring, copy, decisions, escalations | DronaHQ agents, real LLM calls | ✅ Real |
+| Lead discovery | Seeded pool of real companies | ❌ No Apollo/Crunchbase/LinkedIn integration |
+| All state | Browser `localStorage` | Per-visitor, not shared |
+
+There is **no lead-sourcing integration**. The activity log says so in plain words
+(`seeded demo pool — no lead-source integration connected`) rather than implying an Apollo
+or Crunchbase call that does not happen.
+
+### Why the companies are real
+
+An earlier version used invented company names. That fails in a way that is worse than
+returning nothing: asked about "Kestrel Cloud", the Research Agent matched it to
+`usekestrel.ai` — a real, unrelated business — and produced a confident, sourced brief
+about the wrong company. Every downstream agent then wrote from that.
+
+Using real companies means the research, the ICP score and the generated copy are all
+checkable against reality. Each pool also deliberately includes companies that **miss**
+the ICP — a consultancy in the SaaS campaign, a crypto exchange in the BFSI campaign, a
+robotics firm in the voice-AI campaign — so the ICP Fitment Agent has genuine decisions to
+make instead of approving everything.
+
+### Why the contacts are not real
+
+Real people's names and email addresses are deliberately kept out of a system that models
+outbound outreach. Nothing is ever actually delivered — there is no Gmail, Twilio or
+LinkedIn sending in this build — but synthetic contacts mean that stays true even by
+accident.
+
+---
+
 ## Tech stack
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**
@@ -299,6 +339,9 @@ The India BFSI campaign ships Paused on purpose, so the difference is visible on
 ## Known limitations
 
 - Agents without a configured DronaHQ webhook fall back to locally generated steps.
+- Lead discovery draws from a seeded pool of real companies; there is no live
+  lead-sourcing integration.
+- Prospect contacts are synthetic personas at real companies.
 - The Voice SDR agent is not wired to DronaHQ in this build.
 - Outreach is generated but not actually delivered: no Gmail, Twilio or LinkedIn sending yet.
 - State is per-browser; two people opening the deployed URL each get their own demo.

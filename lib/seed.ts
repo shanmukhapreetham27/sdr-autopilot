@@ -245,10 +245,24 @@ export const SEED_CAMPAIGNS: Campaign[] = [
 // Prospects
 // ---------------------------------------------------------------------------
 
+/**
+ * Seeded prospects.
+ *
+ * Companies are REAL and publicly known, chosen to genuinely match (or
+ * genuinely miss) each campaign's ICP. That matters: the Research Agent does
+ * live web lookups, so an invented company name gets silently matched to some
+ * unrelated real business and the agent returns a confident, sourced brief
+ * about the wrong company.
+ *
+ * Contact names, titles and email addresses are synthetic personas. Real
+ * people's contact details are deliberately not used in a system that models
+ * outbound outreach.
+ */
 type SeedProspect = [
   name: string,
   title: string,
   company: string,
+  domain: string,
   location: string,
   state: Prospect["state"],
   fit: number,
@@ -257,9 +271,8 @@ type SeedProspect = [
 ];
 
 function mkProspects(campaignId: string, prefix: string, rows: SeedProspect[]): Prospect[] {
-  return rows.map(([name, title, company, location, state, fitScore, touched, lastAction], i) => {
+  return rows.map(([name, title, company, domain, location, state, fitScore, touched, lastAction], i) => {
     const handle = name.toLowerCase().replace(/[^a-z]+/g, ".");
-    const domain = company.toLowerCase().replace(/[^a-z0-9]+/g, "") + ".com";
     return {
       id: `${prefix}_${i + 1}`,
       campaignId,
@@ -274,53 +287,55 @@ function mkProspects(campaignId: string, prefix: string, rows: SeedProspect[]): 
       touched,
       lastAction,
       lastActionAt: "2026-09-20T07:00:00.000Z",
-      research: [],
     };
   });
 }
 
 export const SEED_PROSPECTS: Prospect[] = [
   ...mkProspects("camp_ussaas", "p_us", [
-    ["Dana Whitfield", "CTO", "Loomwork", "Austin, TX", "meeting", 91, ["email", "linkedin"], "Booked 20-min technical call for Tue"],
-    ["Marcus Ellery", "VP Engineering", "Parcelbase", "Denver, CO", "engaged", 84, ["email"], "Replied asking about self-hosting"],
-    ["Sofia Ramirez", "CTO", "Brightline Ops", "San Jose, CA", "engaged", 88, ["linkedin", "email"], "Accepted LinkedIn connection, opened email 3x"],
-    ["Tom Iyer", "Head of Platform", "Cadencely", "Seattle, WA", "contacted", 79, ["email"], "First touch sent, no reply yet"],
-    ["Rachel Okonkwo", "CTO", "Fernpost", "Boston, MA", "contacted", 82, ["linkedin"], "LinkedIn message delivered"],
-    ["Ben Straus", "VP Engineering", "Northaven Data", "Chicago, IL", "qualified", 76, [], "Qualified, queued for first touch"],
-    ["Amara Singh", "CTO", "Trellisway", "New York, NY", "qualified", 85, [], "Qualified, scheduled for 14:00 send"],
-    ["Colin Fraser", "Head of Platform", "Oakline", "Portland, OR", "researched", 71, [], "Research brief complete"],
-    ["Yuki Tanaka", "VP Engineering", "Stackforge", "San Francisco, CA", "researched", 80, [], "Research brief complete"],
-    ["Priyanka Rao", "CTO", "Valemark", "Atlanta, GA", "discovered", 0, [], "Awaiting ICP scoring"],
-    ["Derek Olsen", "CTO", "Quillbridge", "Miami, FL", "discovered", 0, [], "Awaiting ICP scoring"],
-    ["Hannah Lowe", "Director of Engineering", "Pactfield", "Remote, US", "rejected", 41, [], "Rejected: 22 employees, below ICP floor"],
+    ["Dana Whitfield", "CTO", "Linear", "linear.app", "San Francisco, CA", "meeting", 91, ["email", "linkedin"], "Booked 20-min technical call for Tue"],
+    ["Marcus Ellery", "VP Engineering", "Retool", "retool.com", "San Francisco, CA", "engaged", 84, ["email"], "Replied asking about self-hosting"],
+    ["Sofia Ramirez", "CTO", "Render", "render.com", "San Francisco, CA", "engaged", 88, ["linkedin", "email"], "Accepted LinkedIn connection, opened email 3x"],
+    ["Tom Iyer", "Head of Platform", "Temporal", "temporal.io", "Seattle, WA", "contacted", 79, ["email"], "First touch sent, no reply yet"],
+    ["Rachel Okonkwo", "CTO", "Vanta", "vanta.com", "San Francisco, CA", "contacted", 82, ["linkedin"], "LinkedIn message delivered"],
+    ["Ben Straus", "VP Engineering", "Airbyte", "airbyte.com", "San Francisco, CA", "qualified", 76, [], "Qualified, queued for first touch"],
+    ["Amara Singh", "CTO", "WorkOS", "workos.com", "San Francisco, CA", "qualified", 85, [], "Qualified, scheduled for 14:00 send"],
+    ["Colin Fraser", "Head of Platform", "Honeycomb", "honeycomb.io", "San Francisco, CA", "researched", 71, [], "Research brief complete"],
+    ["Yuki Tanaka", "VP Engineering", "Clerk", "clerk.com", "San Francisco, CA", "researched", 80, [], "Research brief complete"],
+    ["Priyanka Rao", "CTO", "Sentry", "sentry.io", "San Francisco, CA", "discovered", 0, [], "Awaiting ICP scoring"],
+    ["Derek Olsen", "CTO", "PostHog", "posthog.com", "San Francisco, CA", "discovered", 0, [], "Awaiting ICP scoring"],
+    // A genuine, verifiable ICP miss: the campaign excludes consultancies.
+    ["Hannah Lowe", "Director of Engineering", "Accenture", "accenture.com", "Dublin", "rejected", 38, [], "Rejected: consultancy, excluded by campaign criteria"],
     // Deliberate cross-campaign duplicate: also targeted by "US Voice AI Founders".
     // Both campaigns are Live, so the conflict panel should flag this one.
-    ["Ravi Anand", "CTO & Co-founder", "Echoline", "Palo Alto, CA", "qualified", 80, [], "Qualified — held, duplicate detected in another live campaign"],
+    ["Ravi Anand", "CTO & Co-founder", "Vapi", "vapi.ai", "San Francisco, CA", "qualified", 80, [], "Qualified - held, duplicate detected in another live campaign"],
   ]),
   ...mkProspects("camp_bfsi", "p_in", [
-    ["Vikram Desai", "CIO", "Meridian Bank", "Mumbai", "meeting", 89, ["email", "linkedin"], "Intro call confirmed with two architects"],
-    ["Lakshmi Iyer", "Head of Digital", "Suryodaya Finserv", "Bengaluru", "engaged", 83, ["email"], "Asked for a compliance one-pager"],
-    ["Rohit Bansal", "CTO", "Anantha NBFC", "Delhi", "contacted", 78, ["email"], "First touch sent before pause"],
-    ["Neha Kulkarni", "CIO", "Patwardhan Insurance", "Pune", "contacted", 81, ["linkedin"], "LinkedIn note delivered"],
-    ["Sanjay Menon", "Head of Technology", "Coastal Capital", "Kochi", "qualified", 74, [], "Qualified, held by campaign pause"],
-    ["Ananya Gupta", "CIO", "Shree Mutual", "Ahmedabad", "qualified", 80, [], "Qualified, held by campaign pause"],
-    ["Imran Sheikh", "CTO", "Nirmal Bank", "Hyderabad", "researched", 77, [], "Research brief complete"],
-    ["Deepa Raghavan", "Head of Digital", "Trivandrum Finance", "Chennai", "researched", 69, [], "Research brief complete"],
-    ["Kartik Joshi", "CIO", "Ridgeline Securities", "Mumbai", "discovered", 0, [], "Awaiting ICP scoring"],
-    ["Sunita Pillai", "CTO", "Gramin Credit", "Jaipur", "rejected", 38, [], "Rejected: 180 employees, below segment floor"],
+    ["Vikram Desai", "CIO", "HDFC Bank", "hdfcbank.com", "Mumbai", "meeting", 89, ["email", "linkedin"], "Intro call confirmed with two architects"],
+    ["Lakshmi Iyer", "Head of Digital", "Bajaj Finserv", "bajajfinserv.in", "Pune", "engaged", 83, ["email"], "Asked for a compliance one-pager"],
+    ["Rohit Bansal", "CTO", "Shriram Finance", "shriramfinance.in", "Chennai", "contacted", 78, ["email"], "First touch sent before pause"],
+    ["Neha Kulkarni", "CIO", "SBI Life Insurance", "sbilife.co.in", "Mumbai", "contacted", 81, ["linkedin"], "LinkedIn note delivered"],
+    ["Sanjay Menon", "Head of Technology", "Muthoot Finance", "muthootfinance.com", "Kochi", "qualified", 74, [], "Qualified, held by campaign pause"],
+    ["Ananya Gupta", "CIO", "Kotak Mahindra Bank", "kotak.com", "Mumbai", "qualified", 80, [], "Qualified, held by campaign pause"],
+    ["Imran Sheikh", "CTO", "IDFC First Bank", "idfcfirstbank.com", "Mumbai", "researched", 77, [], "Research brief complete"],
+    ["Deepa Raghavan", "Head of Digital", "HDFC Life", "hdfclife.com", "Mumbai", "researched", 69, [], "Research brief complete"],
+    ["Kartik Joshi", "CIO", "Axis Bank", "axisbank.com", "Mumbai", "discovered", 0, [], "Awaiting ICP scoring"],
+    // Verifiable ICP miss: the campaign excludes crypto.
+    ["Sunita Pillai", "CTO", "CoinDCX", "coindcx.com", "Mumbai", "rejected", 34, [], "Rejected: crypto exchange, excluded by campaign criteria"],
   ]),
   ...mkProspects("camp_voiceai", "p_va", [
-    ["Elena Marsh", "Co-founder & CEO", "Wavelet AI", "San Francisco, CA", "opportunity", 94, ["linkedin", "voice"], "Moved to opportunity after 18-min call"],
-    ["Jonah Kim", "Founder", "Trellis Voice", "New York, NY", "meeting", 90, ["linkedin"], "Booked founder call Thursday"],
-    ["Ravi Anand", "CTO & Co-founder", "Echoline", "Palo Alto, CA", "engaged", 86, ["linkedin", "voice"], "Voice call completed, asked for docs"],
-    ["Mia Delacroix", "Founder", "Sonder Labs", "Los Angeles, CA", "engaged", 81, ["linkedin"], "Replied on LinkedIn, curious"],
-    ["Owen Brady", "Co-founder", "Verbally", "Austin, TX", "contacted", 77, ["linkedin"], "LinkedIn first touch delivered"],
-    ["Chiara Rossi", "CEO", "Tonecraft", "Boston, MA", "contacted", 79, ["linkedin"], "LinkedIn first touch delivered"],
-    ["Felix Nwosu", "Founder & CTO", "Cadence Voice", "Seattle, WA", "qualified", 83, [], "Qualified, queued for LinkedIn touch"],
-    ["Grace Lindqvist", "Co-founder", "Murmur AI", "Remote, US", "qualified", 75, [], "Qualified, queued"],
-    ["Aditya Varma", "Founder", "Speakeasy Systems", "Chicago, IL", "researched", 72, [], "Research brief complete"],
-    ["Noor Haddad", "CEO", "Larynx Labs", "San Diego, CA", "discovered", 0, [], "Awaiting ICP scoring"],
-    ["Peter Halloran", "Founder", "Loud Robotics", "Detroit, MI", "rejected", 44, [], "Rejected: hardware robotics, not voice AI"],
+    ["Elena Marsh", "Co-founder & CEO", "Cartesia", "cartesia.ai", "San Francisco, CA", "opportunity", 94, ["linkedin", "voice"], "Moved to opportunity after 18-min call"],
+    ["Jonah Kim", "Founder", "Rime", "rime.ai", "San Francisco, CA", "meeting", 90, ["linkedin"], "Booked founder call Thursday"],
+    ["Ravi Anand", "CTO & Co-founder", "Vapi", "vapi.ai", "San Francisco, CA", "engaged", 86, ["linkedin", "voice"], "Voice call completed, asked for docs"],
+    ["Mia Delacroix", "Founder", "Retell AI", "retellai.com", "San Francisco, CA", "engaged", 81, ["linkedin"], "Replied on LinkedIn, curious"],
+    ["Owen Brady", "Co-founder", "Bland AI", "bland.ai", "San Francisco, CA", "contacted", 77, ["linkedin"], "LinkedIn first touch delivered"],
+    ["Chiara Rossi", "CEO", "LiveKit", "livekit.io", "San Francisco, CA", "contacted", 79, ["linkedin"], "LinkedIn first touch delivered"],
+    ["Felix Nwosu", "Founder & CTO", "Vocode", "vocode.dev", "San Francisco, CA", "qualified", 83, [], "Qualified, queued for LinkedIn touch"],
+    ["Grace Lindqvist", "Co-founder", "Hume AI", "hume.ai", "New York, NY", "qualified", 75, [], "Qualified, queued"],
+    ["Aditya Varma", "Founder", "Deepgram", "deepgram.com", "San Francisco, CA", "researched", 72, [], "Research brief complete"],
+    ["Noor Haddad", "CEO", "AssemblyAI", "assemblyai.com", "San Francisco, CA", "discovered", 0, [], "Awaiting ICP scoring"],
+    // Verifiable ICP miss: robotics, not a voice AI company.
+    ["Peter Halloran", "Founder", "Boston Dynamics", "bostondynamics.com", "Waltham, MA", "rejected", 21, [], "Rejected: robotics company, no voice AI product"],
   ]),
 ];
 

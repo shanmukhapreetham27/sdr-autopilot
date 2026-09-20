@@ -121,11 +121,6 @@ export interface Campaign {
   activeVersionId: string;
 }
 
-export interface ResearchNote {
-  label: string;
-  value: string;
-}
-
 export interface Prospect {
   id: string;
   campaignId: string;
@@ -142,7 +137,6 @@ export interface Prospect {
   touched: Channel[];
   lastAction: string;
   lastActionAt: string;
-  research: ResearchNote[];
   /**
    * Full brief produced by the Research Agent.
    *

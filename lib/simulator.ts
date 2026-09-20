@@ -287,65 +287,125 @@ const LAST_NAMES = [
   "Verma", "Orwell", "Bhatt", "Lindgren", "Saxena", "Rowe", "Chandra", "Vance", "Dutta",
 ];
 
-interface DiscoveryPool {
-  titles: string[];
-  companies: string[];
-  locations: string[];
-  source: string;
+interface PoolCompany {
+  name: string;
+  domain: string;
+  location: string;
 }
 
+interface DiscoveryPool {
+  titles: string[];
+  companies: PoolCompany[];
+}
+
+/**
+ * Discovery pools.
+ *
+ * These are REAL, publicly known companies. That is deliberate and it matters:
+ * the Research Agent performs live web lookups, so an invented company name
+ * does not come back empty — it gets matched to some unrelated real business
+ * and the agent returns a confident, sourced brief about the wrong company.
+ * Real names mean the research, the ICP score and the personalisation are all
+ * checkable against reality.
+ *
+ * Each pool mixes companies that clearly fit the campaign ICP with a few that
+ * genuinely do not, so the ICP Fitment Agent has real decisions to make rather
+ * than rubber-stamping everything.
+ *
+ * Contact names are synthetic. Real individuals' details are deliberately not
+ * used in a system that models outbound outreach.
+ */
 const DISCOVERY_POOLS: Record<string, DiscoveryPool> = {
   camp_ussaas: {
     titles: ["CTO", "VP Engineering", "Head of Platform", "Director of Engineering"],
-    companies: ["Hollowpoint", "Runway Metrics", "Kestrel Cloud", "Vantage Ops", "Brambleworks", "Signalpost", "Northgate SaaS"],
-    locations: ["Austin, TX", "San Francisco, CA", "New York, NY", "Boston, MA", "Denver, CO", "Seattle, WA"],
-    source: "Apollo search: US B2B SaaS, 50-1000 employees",
+    companies: [
+      { name: "Linear", domain: "linear.app", location: "San Francisco, CA" },
+      { name: "Retool", domain: "retool.com", location: "San Francisco, CA" },
+      { name: "Render", domain: "render.com", location: "San Francisco, CA" },
+      { name: "Temporal", domain: "temporal.io", location: "Seattle, WA" },
+      { name: "Vanta", domain: "vanta.com", location: "San Francisco, CA" },
+      { name: "Airbyte", domain: "airbyte.com", location: "San Francisco, CA" },
+      { name: "WorkOS", domain: "workos.com", location: "San Francisco, CA" },
+      { name: "Honeycomb", domain: "honeycomb.io", location: "San Francisco, CA" },
+      { name: "Clerk", domain: "clerk.com", location: "San Francisco, CA" },
+      { name: "Sentry", domain: "sentry.io", location: "San Francisco, CA" },
+      // Consultancy — excluded by this campaign's criteria, so the ICP agent
+      // should reject it.
+      { name: "Accenture", domain: "accenture.com", location: "Dublin" },
+    ],
   },
   camp_bfsi: {
     titles: ["CIO", "CTO", "Head of Digital Transformation", "Head of Technology"],
-    companies: ["Sahyadri Bank", "Konark Finserv", "Deccan Mutual", "Brahmaputra Capital", "Vindhya Insurance", "Kaveri NBFC"],
-    locations: ["Mumbai", "Bengaluru", "Delhi", "Chennai", "Pune", "Hyderabad"],
-    source: "Apollo search: India BFSI, 500+ employees",
+    companies: [
+      { name: "HDFC Bank", domain: "hdfcbank.com", location: "Mumbai" },
+      { name: "ICICI Bank", domain: "icicibank.com", location: "Mumbai" },
+      { name: "Axis Bank", domain: "axisbank.com", location: "Mumbai" },
+      { name: "Kotak Mahindra Bank", domain: "kotak.com", location: "Mumbai" },
+      { name: "Bajaj Finserv", domain: "bajajfinserv.in", location: "Pune" },
+      { name: "SBI Life Insurance", domain: "sbilife.co.in", location: "Mumbai" },
+      { name: "Muthoot Finance", domain: "muthootfinance.com", location: "Kochi" },
+      { name: "Shriram Finance", domain: "shriramfinance.in", location: "Chennai" },
+      { name: "IDFC First Bank", domain: "idfcfirstbank.com", location: "Mumbai" },
+      // Crypto — excluded by this campaign's criteria.
+      { name: "CoinDCX", domain: "coindcx.com", location: "Mumbai" },
+    ],
   },
   camp_voiceai: {
     titles: ["Founder", "Co-founder & CEO", "CTO & Co-founder", "CEO"],
-    companies: ["Timbre AI", "Resonant", "Vox Systems", "Chorus Labs", "Sotto Voce", "Quietloud AI"],
-    locations: ["San Francisco, CA", "New York, NY", "Palo Alto, CA", "Austin, TX", "Remote, US"],
-    source: "LinkedIn + Crunchbase: seed/Series A voice AI",
+    companies: [
+      { name: "Vapi", domain: "vapi.ai", location: "San Francisco, CA" },
+      { name: "Retell AI", domain: "retellai.com", location: "San Francisco, CA" },
+      { name: "Cartesia", domain: "cartesia.ai", location: "San Francisco, CA" },
+      { name: "Rime", domain: "rime.ai", location: "San Francisco, CA" },
+      { name: "Bland AI", domain: "bland.ai", location: "San Francisco, CA" },
+      { name: "LiveKit", domain: "livekit.io", location: "San Francisco, CA" },
+      { name: "Vocode", domain: "vocode.dev", location: "San Francisco, CA" },
+      { name: "Hume AI", domain: "hume.ai", location: "New York, NY" },
+      // Well past the campaign's headcount ceiling — a real judgement call
+      // for the ICP agent rather than an obvious pass.
+      { name: "Deepgram", domain: "deepgram.com", location: "San Francisco, CA" },
+      { name: "AssemblyAI", domain: "assemblyai.com", location: "San Francisco, CA" },
+    ],
   },
 };
 
 const DEFAULT_POOL: DiscoveryPool = {
   titles: ["VP Engineering", "Director of Platform", "Head of Technology"],
-  companies: ["Meridian Systems", "Alderway", "Pinehurst Digital", "Copperline"],
-  locations: ["Remote", "London", "Singapore", "Toronto"],
-  source: "Apollo search matching campaign ICP",
+  companies: [
+    { name: "Stripe", domain: "stripe.com", location: "San Francisco, CA" },
+    { name: "Datadog", domain: "datadoghq.com", location: "New York, NY" },
+    { name: "Snowflake", domain: "snowflake.com", location: "Bozeman, MT" },
+  ],
 };
+
+/**
+ * Honest provenance. There is no Apollo, Crunchbase or LinkedIn integration in
+ * this build, so the activity log must not imply one.
+ */
+const DISCOVERY_SOURCE = "seeded demo pool — no lead-source integration connected";
 
 function discoverProspect(campaign: Campaign): { prospect: Prospect; source: string } {
   const pool = DISCOVERY_POOLS[campaign.id] ?? DEFAULT_POOL;
   const name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
   const company = pick(pool.companies);
   const handle = name.toLowerCase().replace(/[^a-z]+/g, ".");
-  const domain = company.toLowerCase().replace(/[^a-z0-9]+/g, "") + ".com";
 
   return {
-    source: pool.source,
+    source: DISCOVERY_SOURCE,
     prospect: {
       id: `p_${Math.random().toString(36).slice(2, 9)}`,
       campaignId: campaign.id,
       name,
       title: pick(pool.titles),
-      company,
-      location: pick(pool.locations),
-      email: `${handle}@${domain}`,
+      company: company.name,
+      location: company.location,
+      email: `${handle}@${company.domain}`,
       linkedin: `linkedin.com/in/${handle.replace(/\./g, "-")}`,
       state: "discovered",
       fitScore: 0,
       touched: [],
       lastAction: "Discovered, awaiting ICP scoring",
       lastActionAt: new Date().toISOString(),
-      research: [],
     },
   };
 }
