@@ -27,7 +27,8 @@ Built for the Inter Guild Buildathon 2026 (Tech Contingent, IIT Madras × DronaH
 | Voice SDR agent | ⛔ Out of scope for this build |
 | Gmail sending (redirected to a demo inbox) | ✅ Working |
 | Apollo / Twilio / LinkedIn sending | ⛔ Not wired |
-| Authentication, rep assignment, persistent database | ⛔ Out of scope for this build |
+| Persistent shared state (Neon Postgres) | ✅ Working |
+| Authentication, rep assignment | ⛔ Out of scope for this build |
 
 ### About the agent loop
 
@@ -310,9 +311,30 @@ and channel pause as independent levers and each is a targeted write. And
 `activity_events.campaign_id` is deliberately not a foreign key, because
 platform-wide events such as the kill switch belong to no single campaign.
 
-> **The app does not read from Postgres yet.** State still lives in the
-> browser via Zustand. The schema and seed are in place; wiring the store to
-> the database is the next step.
+### How the app talks to it
+
+```
+Browser ──GET  /api/state──▶  readState()      full snapshot
+        ──POST /api/state──▶  applyCommand()   one typed command
+```
+
+`lib/commands.ts` defines every mutation as one discriminated union. That is
+deliberate rather than a REST resource per mutation: the operations are not
+CRUD — "pause this one agent while the campaign keeps running" is not a PATCH
+on a resource — and a single typed union means client and server cannot drift.
+Adding a case is a compile error until both sides handle it.
+
+Writes are optimistic. The store applies the change locally, then posts the
+command; commands carry whole entities so the id and timestamps in the
+optimistic update are the ones that land in the database. If a write fails the
+store flips to `offline` and the UI says so, rather than showing state that is
+no longer backed by the database.
+
+Each command runs in a transaction, because several of them write more than
+one table — creating a campaign writes four.
+
+`resetDemo` and `npm run db:seed` share one `reseed()` implementation in
+`lib/db.ts`, so the CLI and the app cannot seed differently.
 
 ---
 
@@ -320,12 +342,12 @@ platform-wide events such as the kill switch belong to no single campaign.
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**
 - **Tailwind CSS v4** for styling
-- **Zustand** (with `persist`) for client state, so a demo survives a page reload
+- **Zustand** for the client-side working copy, backed by Postgres
 - Deployed on **Vercel**
 
-State currently lives in the browser via `localStorage`. This is deliberate for the MVP: it
-makes the deployed demo work with zero infrastructure. The store is the single seam between
-the UI and persistence, so swapping in a server-backed database is a contained change.
+State lives in Neon Postgres. The Zustand store is a working copy for
+responsiveness, not the source of truth — nothing is written to `localStorage`,
+so a reload or a second visitor sees the same campaigns.
 
 ---
 
@@ -428,7 +450,6 @@ The India BFSI campaign ships Paused on purpose, so the difference is visible on
 - Prospect contacts are synthetic personas at real companies.
 - The Voice SDR agent is not wired to DronaHQ in this build.
 - Outreach is generated but not actually delivered: no Gmail, Twilio or LinkedIn sending yet.
-- State is per-browser; two people opening the deployed URL each get their own demo.
 - No authentication — the app assumes a single trusted operator.
 - Representative assignment and offboarding reassignment are not implemented.
 - A/B variant comparison creates the variant but does not yet chart the two side by side.

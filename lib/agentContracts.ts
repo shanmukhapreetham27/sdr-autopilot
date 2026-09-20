@@ -259,9 +259,19 @@ const arr = (v: unknown): string[] =>
  * `{ success, thread_id, run_id, message, response }`, parsing a JSON string
  * payload if that is what came back.
  */
-export function unwrapEnvelope(raw: unknown): { payload: unknown; runId?: string } {
+export function unwrapEnvelope(raw: unknown): { payload: unknown; runId?: string; empty?: boolean } {
   const root = asDict(raw);
   const runId = str(root.run_id);
+
+  // A DronaHQ envelope with a null `response` means the run completed but
+  // produced no output — usually an unbound input variable. Falling through
+  // to `raw` would stringify the envelope and report `"success": true` as if
+  // it were the agent's answer.
+  const isEnvelope = "success" in root || "run_id" in root;
+  if (isEnvelope && root.response == null) {
+    return { payload: null, runId, empty: true };
+  }
+
   let payload = root.response ?? root.result ?? root.data ?? root.output ?? raw;
 
   if (typeof payload === "string") {
@@ -354,7 +364,20 @@ function actionToken(d: Record<string, unknown>, text: string): string {
 }
 
 export function parseResponse(task: LiveAgentKey, raw: unknown): AgentOutcome {
-  const { payload } = unwrapEnvelope(raw);
+  const { payload, empty } = unwrapEnvelope(raw);
+
+  // The run completed but returned nothing. Hold the prospect and say so
+  // plainly, rather than inventing a decision from an empty answer.
+  if (empty) {
+    return {
+      text: `The ${task} agent completed but returned no output. Most likely an unbound input variable on its Webhook Trigger.`,
+      headline: `${task} returned no output`,
+      decision: "hold",
+      requiresReview: true,
+      raw,
+    };
+  }
+
   const d = asDict(payload);
   const text = textOf(payload);
   const structured = Object.keys(d).length > 0;

@@ -49,6 +49,20 @@ function useIntegrationStatus(enabled: boolean) {
 }
 
 /**
+ * Load the snapshot from Postgres once the app is on the client.
+ *
+ * The agent loop is gated on this: stepping a campaign before the snapshot
+ * arrives would act on an empty store and write phantom state back.
+ */
+function useHydrate(enabled: boolean) {
+  const hydrate = useSdr((s) => s.hydrate);
+  useEffect(() => {
+    if (!enabled) return;
+    void hydrate();
+  }, [enabled, hydrate]);
+}
+
+/**
  * Mailer state, polled so the send counter stays current while agents work.
  * Read-only: the recipient is decided server-side and cannot be set here.
  */
@@ -98,7 +112,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const mounted = useHydrated();
 
-  useAgentLoop(mounted);
+  useHydrate(mounted);
   useIntegrationStatus(mounted);
   const mailer = useMailerStatus(mounted);
 
@@ -107,6 +121,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const setKillSwitch = useSdr((s) => s.setKillSwitch);
   const resetDemo = useSdr((s) => s.resetDemo);
   const liveAgents = useSdr((s) => s.liveAgents);
+  const sync = useSdr((s) => s.sync);
+  const lastError = useSdr((s) => s.lastError);
+
+  // Only step campaigns once real state is loaded.
+  useAgentLoop(mounted && sync === "ready");
 
   const liveCount = campaigns.filter((c) => c.status === "live").length;
   const wiredCount = liveAgents.length;
@@ -147,7 +166,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               Agent loop
             </div>
             <div className="mt-1 flex items-center gap-1.5 text-xs">
-              {mounted && !killSwitch && liveCount > 0 ? (
+              {mounted && sync === "ready" && !killSwitch && liveCount > 0 ? (
                 <>
                   <span className="live-dot h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   <span className="text-emerald-300">
@@ -157,7 +176,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               ) : (
                 <>
                   <span className="h-1.5 w-1.5 rounded-full bg-slate-600" />
-                  <span className="text-slate-500">{killSwitch ? "Halted" : "Idle"}</span>
+                  <span className="text-slate-500">
+                    {killSwitch ? "Halted" : sync === "loading" ? "Loading…" : "Idle"}
+                  </span>
                 </>
               )}
             </div>
@@ -240,6 +261,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </button>
         </header>
 
+        {sync === "offline" && (
+          <div className="border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-xs text-amber-200">
+            Not synced to the database — changes on screen are not being saved.
+            {lastError ? ` (${lastError})` : ""}
+          </div>
+        )}
+
         {killSwitch && (
           <div className="border-b border-rose-500/30 bg-rose-500/10 px-6 py-2 text-xs text-rose-200">
             All autonomous external actions are halted platform-wide. Campaign states are
@@ -248,7 +276,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         )}
 
         <main className="min-w-0 flex-1 px-6 py-6">
-          {mounted ? children : <ShellSkeleton />}
+          {mounted && sync !== "loading" ? children : <ShellSkeleton />}
         </main>
       </div>
     </div>
